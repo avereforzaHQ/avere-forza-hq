@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: avere-forza-hq
+    runtime: node
+    plan: starter
+    buildCommand: cd server && npm install
+    startCommand: cd server && npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+      - key: DROPBOX_CONTENT_FOLDER
+        value: /AVERE CONTENT/AF LIBRARY
+      - key: DROPBOX_APP_KEY
+        sync: false
+      - key: DROPBOX_APP_SECRET
+        sync: false
+      - key: DROPBOX_REFRESH_TOKEN
+        sync: false
+      - key: HQ_USERNAME
+        sync: false
+      - key: HQ_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+    disk:
+      name: avere-forza-data
+      mountPath: /var/data
+      sizeGB: 1

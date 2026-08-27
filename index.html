@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Avere Forza HQ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="app">
+
+  <!-- ================= SIDEBAR ================= -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <span class="brand-mark">AF</span>
+      <div class="brand-text">
+        <h1>Avere Forza</h1>
+        <p>Command HQ</p>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <button class="nav-btn active" data-view="dashboard"><span>📊</span> Dashboard</button>
+      <button class="nav-btn" data-view="pinterest"><span>📌</span> Pinterest Queue</button>
+      <button class="nav-btn" data-view="spam"><span>📱</span> IG Spam Queue</button>
+      <button class="nav-btn" data-view="personal"><span>🎬</span> Personal Reels/Shorts</button>
+      <button class="nav-btn" data-view="ideas"><span>💡</span> Video Ideas</button>
+      <button class="nav-btn" data-view="influencers"><span>🗂️</span> Influencer Database</button>
+      <button class="nav-btn" data-view="library"><span>📦</span> Dropbox Content Library</button>
+      <button class="nav-btn" data-view="settings"><span>⚙️</span> Settings</button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <p>Editable HQ data is stored securely on the server. Dropbox media stays read-only.</p>
+    </div>
+  </aside>
+
+  <div class="overlay" id="overlay"></div>
+
+  <!-- ================= MAIN ================= -->
+  <main class="main">
+    <header class="topbar">
+      <button class="hamburger" id="hamburger" aria-label="Open menu">☰</button>
+      <h2 id="view-title">Dashboard</h2>
+      <div class="topbar-date" id="topbar-date"></div>
+    </header>
+
+    <!-- ---------- DASHBOARD ---------- -->
+    <section id="view-dashboard" class="view active">
+      <div class="stat-grid">
+        <div class="stat-card">
+          <span class="stat-label">Pinterest today</span>
+          <span class="stat-value" id="stat-pinterest">0/3</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">IG Spam today</span>
+          <span class="stat-value" id="stat-spam">0/3</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Awaiting your approval</span>
+          <span class="stat-value" id="stat-personal">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Influencers tracked</span>
+          <span class="stat-value" id="stat-influencers">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Video ideas saved</span>
+          <span class="stat-value" id="stat-ideas">0</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Today's Posting Plan</h3>
+        <ul class="plan-list" id="plan-list"></ul>
+      </div>
+
+      <div class="panel">
+        <h3>Activity Log</h3>
+        <ul class="log-list" id="activity-log"></ul>
+      </div>
+    </section>
+
+    <!-- ---------- PINTEREST QUEUE ---------- -->
+    <section id="view-pinterest" class="view">
+      <div class="view-header">
+        <h3>Pinterest Queue — Brand Account</h3>
+        <p class="subtext">3 photos are pulled daily from your <strong>Pinterest folder</strong> (set it up in Settings). Edit captions, swap any photo out, and confirm the three posting slots for today.</p>
+      </div>
+      <div class="card-grid" id="pinterest-cards"></div>
+    </section>
+
+    <!-- ---------- IG SPAM QUEUE ---------- -->
+    <section id="view-spam" class="view">
+      <div class="view-header">
+        <h3>IG Spam Account Queue</h3>
+        <p class="subtext">A separate rotation of 3 photos a day from your <strong>Spam folder</strong> — completely independent from the Pinterest folder.</p>
+      </div>
+      <div class="card-grid" id="spam-cards"></div>
+    </section>
+
+    <!-- ---------- PERSONAL REELS/SHORTS ---------- -->
+    <section id="view-personal" class="view">
+      <div class="view-header">
+        <h3>Personal — Instagram Reels &amp; YouTube Shorts</h3>
+        <p class="subtext">Content lands here from your <strong>Personal folder</strong> for you to approve. Nothing posts until you hit Approve.</p>
+      </div>
+      <h4 class="sub-heading">Awaiting your review</h4>
+      <div class="card-grid" id="personal-pending-cards"></div>
+
+      <div class="panel">
+        <h3>Approved &amp; Scheduled</h3>
+        <ul class="log-list" id="personal-approved-list"></ul>
+      </div>
+    </section>
+
+    <!-- ---------- VIDEO IDEAS ---------- -->
+    <section id="view-ideas" class="view">
+      <div class="view-header">
+        <h3>Video Idea Notepad</h3>
+        <p class="subtext">Jot down content ideas the second they come to you.</p>
+      </div>
+
+      <form id="idea-form" class="inline-form">
+        <input type="text" id="idea-input" placeholder="e.g. POV grid workout at golden hour..." required />
+        <select id="idea-tag">
+          <option>Reel</option>
+          <option>TikTok</option>
+          <option>Short</option>
+          <option>Pinterest</option>
+          <option>Other</option>
+        </select>
+        <button type="submit" class="btn-primary">Add idea</button>
+      </form>
+
+      <ul class="idea-list" id="idea-list"></ul>
+    </section>
+
+    <!-- ---------- INFLUENCER DATABASE ---------- -->
+    <section id="view-influencers" class="view">
+      <div class="view-header">
+        <h3>Influencer &amp; Creator Database</h3>
+        <p class="subtext">Sizing, shipping details and product colour, all filterable in one place.</p>
+      </div>
+
+      <div class="toolbar">
+        <input type="text" id="influencer-search" placeholder="Search name or email..." />
+        <select id="filter-size"><option value="">All sizes</option></select>
+        <select id="filter-color"><option value="">All colours</option></select>
+        <select id="filter-status"><option value="">All statuses</option></select>
+        <button class="btn-primary" id="add-influencer-btn">+ Add creator</button>
+        <button class="btn-secondary" id="export-csv-btn">Export CSV</button>
+      </div>
+
+      <div class="table-wrap">
+        <table id="influencer-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Size</th>
+              <th>Colour</th>
+              <th>Email</th>
+              <th>Shipping address</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="influencer-tbody"></tbody>
+        </table>
+        <p class="empty-state" id="influencer-empty">No creators yet — click "Add creator" to start your database.</p>
+      </div>
+    </section>
+
+    <!-- ---------- DROPBOX CONTENT LIBRARY ---------- -->
+    <section id="view-library" class="view">
+      <div class="view-header">
+        <h3>Dropbox Content Library</h3>
+        <p class="subtext">This is the live view of your Dropbox content library at <strong>/AVERE CONTENT/AF LIBRARY</strong>. Click Refresh any time to pull the latest files. Nothing here is ever moved, renamed, deleted, uploaded, or posted automatically — Dropbox stays strictly read-only.</p>
+      </div>
+
+      <div class="toolbar">
+        <button class="btn-primary" id="refresh-dropbox-btn">🔄 Refresh Dropbox Content</button>
+        <span class="folder-count" id="dropbox-last-refresh"></span>
+      </div>
+
+      <div class="table-wrap">
+        <table id="dropbox-table">
+          <thead>
+            <tr>
+              <th>Preview</th>
+              <th>File name</th>
+              <th>Format</th>
+              <th>Modified</th>
+              <th>Preview / Open</th>
+            </tr>
+          </thead>
+          <tbody id="dropbox-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ---------- SETTINGS ---------- -->
+    <section id="view-settings" class="view">
+      <div class="view-header">
+        <h3>Settings &amp; Connections</h3>
+      </div>
+
+      <div class="panel">
+        <h3>Content folders</h3>
+        <p class="subtext">Upload the photos for each rotation here. Each folder is completely separate.</p>
+        <div class="folder-row">
+          <div class="folder-box">
+            <label>Pinterest folder</label>
+            <input type="file" id="upload-pinterest" multiple accept="image/*" />
+            <span class="folder-count" id="count-pinterest">0 photos</span>
+          </div>
+          <div class="folder-box">
+            <label>IG Spam folder</label>
+            <input type="file" id="upload-spam" multiple accept="image/*" />
+            <span class="folder-count" id="count-spam">0 photos</span>
+          </div>
+          <div class="folder-box">
+            <label>Personal folder</label>
+            <input type="file" id="upload-personal" multiple accept="image/*" />
+            <span class="folder-count" id="count-personal">0 photos</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Platform connections</h3>
+        <p class="subtext">Placeholders for the real API credentials a backend service would use to actually publish. See the included README for what each one needs.</p>
+        <div class="connection-grid" id="connection-grid"></div>
+      </div>
+
+      <div class="panel">
+        <h3>Account</h3>
+        <p class="subtext">You're signed in to this Avere Forza HQ session.</p>
+        <button class="btn-secondary" id="logout-btn">Log out</button>
+      </div>
+
+      <div class="panel">
+        <h3>Danger zone</h3>
+        <p class="subtext">Wipes every queue, idea and influencer record stored on the server for this HQ.</p>
+        <button class="btn-danger" id="reset-data-btn">Reset all data</button>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ================= INFLUENCER MODAL ================= -->
+<div class="modal-backdrop" id="influencer-modal-backdrop">
+  <div class="modal">
+    <h3 id="influencer-modal-title">Add creator</h3>
+    <form id="influencer-form">
+      <input type="hidden" id="influencer-id" />
+      <label>Name
+        <input type="text" id="f-name" required />
+      </label>
+      <label>Email
+        <input type="email" id="f-email" />
+      </label>
+      <label>Size
+        <select id="f-size">
+          <option>XS</option><option>S</option><option>M</option><option>L</option>
+          <option>XL</option><option>XXL</option><option>Custom</option>
+        </select>
+      </label>
+      <label>Product colour
+        <input type="text" id="f-color" placeholder="e.g. Black / Sage / Sand" />
+      </label>
+      <label>Shipping address
+        <textarea id="f-address" rows="3"></textarea>
+      </label>
+      <label>Status
+        <select id="f-status">
+          <option>Not sent</option>
+          <option>Shipped</option>
+          <option>Delivered</option>
+          <option>Posted</option>
+        </select>
+      </label>
+      <label>Notes
+        <textarea id="f-notes" rows="2" placeholder="Optional"></textarea>
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="influencer-cancel">Cancel</button>
+        <button type="submit" class="btn-primary">Save creator</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<script src="script.js"></script>
+</body>
+</html>
