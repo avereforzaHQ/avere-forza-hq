@@ -27,8 +27,10 @@ db.exec(`
     id TEXT PRIMARY KEY,
     queue TEXT NOT NULL,          -- 'pinterest' | 'spam' | 'personal'
     name TEXT NOT NULL,
+    title TEXT DEFAULT '',
     caption TEXT DEFAULT '',
-    status TEXT DEFAULT 'pending', -- 'pending' | 'posted'
+    destination_url TEXT DEFAULT '',
+    status TEXT DEFAULT 'pending', -- 'pending' | 'submitted' | 'posted' | 'failed'
     image_url TEXT,
     position INTEGER DEFAULT 0,
     updated_at TEXT NOT NULL
@@ -60,6 +62,16 @@ db.exec(`
   );
 `);
 
+// Lightweight schema migrations for existing Render databases.
+function ensureColumn(table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+  if (!columns.includes(column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+ensureColumn('queue_items', 'title', "TEXT DEFAULT ''");
+ensureColumn('queue_items', 'destination_url', "TEXT DEFAULT ''");
+
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -72,14 +84,14 @@ function seedIfEmpty() {
   const queueCount = db.prepare("SELECT COUNT(*) AS n FROM queue_items").get().n;
   if (queueCount === 0) {
     const insert = db.prepare(`
-      INSERT INTO queue_items (id, queue, name, caption, status, image_url, position, updated_at)
-      VALUES (@id, @queue, @name, @caption, @status, @image_url, @position, @updated_at)
+      INSERT INTO queue_items (id, queue, name, title, caption, destination_url, status, image_url, position, updated_at)
+      VALUES (@id, @queue, @name, @title, @caption, @destination_url, @status, @image_url, @position, @updated_at)
     `);
     const seedQueue = (queue, prefix) => {
       for (let n = 1; n <= 3; n++) {
         insert.run({
           id: uid(), queue, name: `${prefix} placeholder ${n}`,
-          caption: "", status: "pending", image_url: null,
+          title: "", caption: "", destination_url: "", status: "pending", image_url: null,
           position: n, updated_at: nowIso(),
         });
       }
@@ -128,8 +140,8 @@ function getFullState() {
   for (const row of rows) {
     if (queues[row.queue]) {
       queues[row.queue].push({
-        id: row.id, name: row.name, caption: row.caption,
-        status: row.status, url: row.image_url,
+        id: row.id, name: row.name, title: row.title || "", caption: row.caption,
+        destinationUrl: row.destination_url || "", status: row.status, url: row.image_url,
       });
     }
   }
@@ -151,16 +163,28 @@ function updateQueueItem(queue, id, fields) {
   const current = db.prepare(`SELECT * FROM queue_items WHERE id = ? AND queue = ?`).get(id, queue);
   if (!current) return null;
   const next = {
+    title: fields.title ?? current.title ?? "",
     caption: fields.caption ?? current.caption,
+    destination_url: fields.destination_url ?? fields.destinationUrl ?? current.destination_url ?? "",
     status: fields.status ?? current.status,
     name: fields.name ?? current.name,
     image_url: fields.image_url ?? current.image_url,
   };
   db.prepare(`
-    UPDATE queue_items SET caption = @caption, status = @status, name = @name, image_url = @image_url, updated_at = @updated_at
+    UPDATE queue_items SET title = @title, caption = @caption, destination_url = @destination_url, status = @status, name = @name, image_url = @image_url, updated_at = @updated_at
     WHERE id = @id
   `).run({ ...next, updated_at: nowIso(), id });
-  return { id, queue, ...next, url: next.image_url };
+  return { id, queue, title: next.title, caption: next.caption, destinationUrl: next.destination_url, status: next.status, name: next.name, image_url: next.image_url, url: next.image_url };
+}
+
+function getQueueItem(queue, id) {
+  const row = db.prepare(`SELECT * FROM queue_items WHERE id = ? AND queue = ?`).get(id, queue);
+  if (!row) return null;
+  return {
+    id: row.id, queue: row.queue, name: row.name, title: row.title || "",
+    caption: row.caption || "", destinationUrl: row.destination_url || "",
+    status: row.status, url: row.image_url, image_url: row.image_url,
+  };
 }
 
 // ---------- influencers ----------
@@ -238,6 +262,7 @@ function resetAll() {
 
 module.exports = {
   getFullState,
+  getQueueItem,
   updateQueueItem,
   createInfluencer,
   updateInfluencer,

@@ -328,3 +328,9 @@ tbody tr:hover{ background: var(--panel-2); }
 }
 .login-card button{ width:100%; margin-top:4px; }
 .login-error{ color:var(--danger); font-size:13px; margin:0; min-height:16px; }
+
+/* Pinterest publishing fields/statuses */
+.queue-text-input{ width:100%; box-sizing:border-box; background:var(--surface-2, #161922); color:inherit; border:1px solid var(--border, #2a2f3a); border-radius:8px; padding:10px 12px; margin-bottom:10px; font:inherit; }
+.status-publishing{ background:rgba(80,140,255,.16); color:#8db7ff; }
+.status-submitted{ background:rgba(76,175,125,.18); color:var(--success); }
+.status-failed{ background:rgba(220,80,80,.18); color:#ff8b8b; }

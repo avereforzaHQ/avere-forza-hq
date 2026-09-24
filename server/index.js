@@ -32,6 +32,7 @@ const Database = require("better-sqlite3");
 const SqliteStore = require("better-sqlite3-session-store")(session);
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 const multer = require("multer");
 const { listFolder, getTemporaryLink, getThumbnail } = require("./lib/dropbox");
 const store = require("./lib/db");
@@ -49,6 +50,7 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const CONTENT_FOLDER = process.env.DROPBOX_CONTENT_FOLDER || "/AVERE CONTENT/AF LIBRARY";
+const ZAPIER_PINTEREST_WEBHOOK_URL = process.env.ZAPIER_PINTEREST_WEBHOOK_URL || "";
 const PROJECT_ROOT = path.join(__dirname, "..");
 
 const IMAGE_EXT = ["jpg", "jpeg", "png", "webp", "gif", "heic"];
@@ -185,6 +187,35 @@ app.use("/uploads", (req, res, next) => {
 }, express.static(UPLOADS_DIR));
 
 /* =========================================================
+   TEMPORARY PUBLISH MEDIA
+   Zapier/Pinterest must be able to fetch an image without an HQ login.
+   This route exposes only the single queued image named in a short-lived,
+   HMAC-signed URL. It does not expose the uploads directory generally.
+========================================================= */
+function publishSignature(queue, id, expires) {
+  const secret = process.env.SESSION_SECRET || "dev-only-insecure-secret-change-me";
+  return crypto.createHmac("sha256", secret).update(`${queue}:${id}:${expires}`).digest("hex");
+}
+
+app.get("/publish-media/:queue/:id", (req, res) => {
+  const { queue, id } = req.params;
+  const expires = Number(req.query.expires);
+  const sig = String(req.query.sig || "");
+  if (!Number.isFinite(expires) || Date.now() > expires) return res.status(403).send("Link expired");
+  const expected = publishSignature(queue, id, expires);
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(403).send("Invalid link");
+
+  const item = store.getQueueItem(queue, id);
+  if (!item || !item.url || !item.url.startsWith("/uploads/")) return res.status(404).send("Image not found");
+  const filename = path.basename(item.url.slice("/uploads/".length));
+  const filePath = path.join(UPLOADS_DIR, filename);
+  if (!fs.existsSync(filePath)) return res.status(404).send("Image not found");
+  res.sendFile(filePath);
+});
+
+/* =========================================================
    HQ DATA API — fully read/write, backed by SQLite (server/lib/db.js).
    Completely separate from the Dropbox integration below.
 ========================================================= */
@@ -207,6 +238,55 @@ app.post("/api/queues/:queue/:id/photo", upload.single("photo"), (req, res) => {
   });
   if (!updated) return res.status(404).json({ error: "Queue item not found" });
   res.json(updated);
+});
+
+// Sends one approved Pinterest queue item to the private Zapier Catch Hook.
+// A successful response means Zapier accepted the job; it does not yet prove
+// Pinterest completed the downstream Create Pin action, so the status becomes
+// "submitted" rather than "posted".
+app.post("/api/publish/pinterest/:id", async (req, res) => {
+  if (!ZAPIER_PINTEREST_WEBHOOK_URL) {
+    return res.status(503).json({ error: "Pinterest publishing is not configured yet." });
+  }
+
+  const item = store.getQueueItem("pinterest", req.params.id);
+  if (!item) return res.status(404).json({ error: "Pinterest queue item not found" });
+  if (!item.url) return res.status(400).json({ error: "Add an image to this Pinterest slot before publishing." });
+
+  let imageUrl = item.url;
+  if (imageUrl.startsWith("/uploads/")) {
+    const expires = Date.now() + (2 * 60 * 60 * 1000); // 2 hours
+    const sig = publishSignature("pinterest", item.id, expires);
+    imageUrl = `${req.protocol}://${req.get("host")}/publish-media/pinterest/${encodeURIComponent(item.id)}?expires=${expires}&sig=${sig}`;
+  } else if (!/^https:\/\//i.test(imageUrl)) {
+    return res.status(400).json({ error: "This image source cannot be published yet." });
+  }
+
+  const payload = {
+    queue_item_id: item.id,
+    image_url: imageUrl,
+    title: item.title || item.name || "Avere Forza",
+    description: item.caption || "",
+    destination_url: item.destinationUrl || "https://avereforza.com",
+  };
+
+  try {
+    const zap = await fetch(ZAPIER_PINTEREST_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const responseText = await zap.text();
+    if (!zap.ok) throw new Error(`Zapier returned ${zap.status}: ${responseText.slice(0, 300)}`);
+
+    const updated = store.updateQueueItem("pinterest", item.id, { status: "submitted" });
+    store.addActivity(`Sent Pinterest slot to Zapier: "${(item.title || item.caption || item.name).slice(0, 80)}"`);
+    return res.json({ success: true, status: "submitted", item: updated });
+  } catch (err) {
+    console.error("Pinterest publish failed:", err);
+    store.updateQueueItem("pinterest", item.id, { status: "failed" });
+    return res.status(502).json({ error: "Could not send this Pin to Zapier. Check the Zap and try again." });
+  }
 });
 
 app.post("/api/influencers", (req, res) => {

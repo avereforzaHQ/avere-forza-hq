@@ -178,3 +178,22 @@ Still not implemented, by design — no social platform is connected yet, and no
 - Queue photo uploads are checked server-side to ensure they're actually image files, regardless of what the browser claims.
 - All displayed captions, ideas, influencer details, activity log entries, and Dropbox filenames are HTML-escaped before being shown, so stored text can never execute as code in the browser.
 - Rotate `HQ_PASSWORD` and `SESSION_SECRET` periodically the same way you'd rotate any shared password.
+
+
+## Pinterest publishing via Zapier
+
+The Pinterest queue can now send a slot to a private Zapier Catch Hook. Add this Render environment variable (never commit the real URL):
+
+`ZAPIER_PINTEREST_WEBHOOK_URL=<your private Catch Hook URL>`
+
+In Zapier, map the webhook fields to Pinterest Create Pin as follows:
+
+- Image → `image_url`
+- Title → `title`
+- Description → `description`
+- Link → `destination_url`
+- Board → select the desired Pinterest board in Zapier
+
+The HQ exposes queued uploaded images to Zapier through a short-lived HMAC-signed URL. The normal `/uploads` area remains private and Dropbox remains read-only.
+
+When Zapier accepts a publish request, the HQ marks the queue item as `submitted`. This means the job reached Zapier; it does not yet provide a downstream Pinterest success callback.

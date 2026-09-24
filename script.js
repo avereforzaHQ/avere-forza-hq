@@ -178,22 +178,42 @@ function renderQueue(key) {
     card.innerHTML = `
       ${thumb}
       <div class="post-card-body">
-        <textarea placeholder="Write a caption..." data-role="caption">${escapeHtml(item.caption ?? "")}</textarea>
+        ${key === "pinterest" ? `<input class="queue-text-input" type="text" placeholder="Pinterest title" data-role="title" value="${escapeHtml(item.title ?? "")}" />` : ""}
+        <textarea placeholder="${key === "pinterest" ? "Pinterest description..." : "Write a caption..."}" data-role="caption">${escapeHtml(item.caption ?? "")}</textarea>
+        ${key === "pinterest" ? `<input class="queue-text-input" type="url" placeholder="Destination link (optional)" data-role="destination-url" value="${escapeHtml(item.destinationUrl ?? "")}" />` : ""}
         <div class="post-card-meta">
           <span>${safeName}</span>
-          <span class="status-pill ${item.status === "posted" ? "status-posted" : "status-pending"}">${escapeHtml(item.status)}</span>
+          <span class="status-pill status-${escapeHtml(item.status || "pending")}">${escapeHtml(item.status)}</span>
         </div>
         <div class="card-actions">
           <label class="btn-secondary" style="cursor:pointer;">
             Swap photo
             <input type="file" accept="image/*" data-role="swap" />
           </label>
-          <button class="btn-primary" data-role="post" ${item.status === "posted" ? "disabled" : ""}>
-            ${key === "personal" ? "Approve & schedule" : "Confirm slot"}
+          <button class="btn-primary" data-role="post" ${["posted","submitted","publishing"].includes(item.status) ? "disabled" : ""}>
+            ${key === "pinterest" ? (item.status === "submitted" ? "Sent to Zapier" : "Publish Pin") : (key === "personal" ? "Approve & schedule" : "Confirm slot")}
           </button>
         </div>
       </div>
     `;
+
+    if (key === "pinterest") {
+      let titleTimer = null;
+      card.querySelector('[data-role="title"]')?.addEventListener("input", e => {
+        item.title = e.target.value;
+        clearTimeout(titleTimer);
+        titleTimer = setTimeout(() => apiSend(`/api/queues/${key}/${item.id}`, "PATCH", { title: item.title })
+          .catch(() => toast("Couldn't save that title", "error")), 500);
+      });
+
+      let linkTimer = null;
+      card.querySelector('[data-role="destination-url"]')?.addEventListener("input", e => {
+        item.destinationUrl = e.target.value;
+        clearTimeout(linkTimer);
+        linkTimer = setTimeout(() => apiSend(`/api/queues/${key}/${item.id}`, "PATCH", { destinationUrl: item.destinationUrl })
+          .catch(() => toast("Couldn't save that link", "error")), 500);
+      });
+    }
 
     // caption editing — saved to the server as you type (debounced)
     let captionTimer = null;
@@ -226,6 +246,23 @@ function renderQueue(key) {
 
     // post / approve
     card.querySelector('[data-role="post"]').addEventListener("click", async () => {
+      if (key === "pinterest") {
+        if (!item.url) { toast("Add an image to this Pinterest slot first", "error"); return; }
+        try {
+          item.status = "publishing";
+          renderQueue(key);
+          const result = await postToPinterest(item.id);
+          item.status = result.item?.status || result.status || "submitted";
+          toast("Pin sent to Zapier", "success");
+        } catch (err) {
+          item.status = "failed";
+          toast(err.message || "Couldn't send this Pin to Zapier", "error");
+        }
+        renderQueue(key);
+        renderStats();
+        return;
+      }
+
       try {
         const updated = await apiSend(`/api/queues/${key}/${item.id}`, "PATCH", { status: "posted" });
         item.status = updated.status;
@@ -591,7 +628,8 @@ qs("#reset-data-btn").addEventListener("click", async () => {
 /* ---------------------- DASHBOARD ---------------------- */
 function renderStats() {
   const postedCount = key => state.queues[key].filter(i => i.status === "posted").length;
-  qs("#stat-pinterest").textContent = `${postedCount("pinterest")}/3`;
+  const pinterestDone = state.queues.pinterest.filter(i => ["submitted","posted"].includes(i.status)).length;
+  qs("#stat-pinterest").textContent = `${pinterestDone}/3`;
   qs("#stat-spam").textContent = `${postedCount("spam")}/3`;
   qs("#stat-personal").textContent = state.queues.personal.filter(i => i.status === "pending").length;
   qs("#stat-influencers").textContent = state.influencers.length;
@@ -632,10 +670,8 @@ function renderActivity() {
    that will run through its own Zapier-based integration, kept
    separate from both Dropbox and the HQ database.
 ========================================================= */
-async function postToPinterest(imageUrl, caption) {
-  // Example real version, once the publishing backend exists:
-  // return fetch("/api/publish/pinterest", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ imageUrl, caption }) })
-  console.log("[stub] would post to Pinterest:", caption);
+async function postToPinterest(queueItemId) {
+  return apiSend(`/api/publish/pinterest/${encodeURIComponent(queueItemId)}`, "POST", {});
 }
 async function postToInstagramSpam(imageUrl, caption) {
   console.log("[stub] would post to IG spam account:", caption);
