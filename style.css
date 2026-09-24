@@ -334,3 +334,14 @@ tbody tr:hover{ background: var(--panel-2); }
 .status-publishing{ background:rgba(80,140,255,.16); color:#8db7ff; }
 .status-submitted{ background:rgba(76,175,125,.18); color:var(--success); }
 .status-failed{ background:rgba(220,80,80,.18); color:#ff8b8b; }
+
+/* Pinterest confirmation link shown only after Zapier/Pinterest callback succeeds. */
+.view-pin-link {
+  display: inline-block;
+  margin: 2px 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--gold, #e9bf55);
+  text-decoration: none;
+}
+.view-pin-link:hover { text-decoration: underline; }

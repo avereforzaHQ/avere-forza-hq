@@ -118,7 +118,7 @@ Anywhere the dashboard displays a value someone typed or that came from Dropbox 
 2. Click **New +** → **Blueprint**.
 3. Connect your GitHub account if prompted, then select the `avere-forza-hq` repository.
 4. Render reads `render.yaml` automatically and shows you the service plus a persistent disk it's about to create. Click **Apply**.
-5. Render will then ask you to fill in the environment variables marked secret (`HQ_USERNAME`, `HQ_PASSWORD`, `SESSION_SECRET`, `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN`) — enter real values for each.
+5. Render will then ask you to fill in the environment variables marked secret (`HQ_USERNAME`, `HQ_PASSWORD`, `SESSION_SECRET`, `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN`, `ZAPIER_PINTEREST_WEBHOOK_URL`, `ZAPIER_PINTEREST_CALLBACK_SECRET`) — enter real values for each.
 
 **Manual path (if you'd rather not use the Blueprint):**
 
@@ -196,4 +196,20 @@ In Zapier, map the webhook fields to Pinterest Create Pin as follows:
 
 The HQ exposes queued uploaded images to Zapier through a short-lived HMAC-signed URL. The normal `/uploads` area remains private and Dropbox remains read-only.
 
-When Zapier accepts a publish request, the HQ marks the queue item as `submitted`. This means the job reached Zapier; it does not yet provide a downstream Pinterest success callback.
+When Zapier accepts a publish request, the HQ first marks the queue item as `submitted`. A third Zapier step can then call the HQ back after Pinterest succeeds; the HQ changes the item to `posted`, stores the Pinterest Pin ID/URL, shows a **View Pin** link, and prevents the same slot from being published twice.
+
+### Pinterest success callback (Zapier step 3)
+
+Add this second Render secret (generate a long random value; do not commit it):
+
+`ZAPIER_PINTEREST_CALLBACK_SECRET=<long random secret>`
+
+In the same Zap, add **Step 3 → Webhooks by Zapier → POST** after **Pinterest → Create Pin**. Use:
+
+- URL: `https://YOUR-RENDER-DOMAIN/api/publish/pinterest/callback`
+- Payload type: JSON
+- `queue_item_id` → map from Step 1 (Catch Hook) `queue_item_id`
+- `pin_id` → map from Step 2 (Pinterest Create Pin) `ID`
+- `callback_secret` → paste the exact value of `ZAPIER_PINTEREST_CALLBACK_SECRET` from Render
+
+The callback only runs if Step 2 succeeds. On success the HQ builds the live URL as `https://www.pinterest.com/pin/<PIN_ID>/`, records it, and changes the queue item from `submitted` to `posted`. HQ→Zapier failures are still marked `failed`. A failure inside Pinterest itself stops the Zap before Step 3, so that downstream-error callback can be added separately later if desired.

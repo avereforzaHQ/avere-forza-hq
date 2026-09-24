@@ -30,8 +30,11 @@ db.exec(`
     title TEXT DEFAULT '',
     caption TEXT DEFAULT '',
     destination_url TEXT DEFAULT '',
-    status TEXT DEFAULT 'pending', -- 'pending' | 'submitted' | 'posted' | 'failed'
+    status TEXT DEFAULT 'pending', -- 'pending' | 'publishing' | 'submitted' | 'posted' | 'failed'
     image_url TEXT,
+    pinterest_pin_id TEXT DEFAULT '',
+    pinterest_pin_url TEXT DEFAULT '',
+    published_at TEXT DEFAULT '',
     position INTEGER DEFAULT 0,
     updated_at TEXT NOT NULL
   );
@@ -71,6 +74,9 @@ function ensureColumn(table, column, definition) {
 }
 ensureColumn('queue_items', 'title', "TEXT DEFAULT ''");
 ensureColumn('queue_items', 'destination_url', "TEXT DEFAULT ''");
+ensureColumn('queue_items', 'pinterest_pin_id', "TEXT DEFAULT ''");
+ensureColumn('queue_items', 'pinterest_pin_url', "TEXT DEFAULT ''");
+ensureColumn('queue_items', 'published_at', "TEXT DEFAULT ''");
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -142,6 +148,8 @@ function getFullState() {
       queues[row.queue].push({
         id: row.id, name: row.name, title: row.title || "", caption: row.caption,
         destinationUrl: row.destination_url || "", status: row.status, url: row.image_url,
+        pinterestPinId: row.pinterest_pin_id || "", pinterestPinUrl: row.pinterest_pin_url || "",
+        publishedAt: row.published_at || "",
       });
     }
   }
@@ -169,12 +177,15 @@ function updateQueueItem(queue, id, fields) {
     status: fields.status ?? current.status,
     name: fields.name ?? current.name,
     image_url: fields.image_url ?? current.image_url,
+    pinterest_pin_id: fields.pinterest_pin_id ?? fields.pinterestPinId ?? current.pinterest_pin_id ?? "",
+    pinterest_pin_url: fields.pinterest_pin_url ?? fields.pinterestPinUrl ?? current.pinterest_pin_url ?? "",
+    published_at: fields.published_at ?? fields.publishedAt ?? current.published_at ?? "",
   };
   db.prepare(`
-    UPDATE queue_items SET title = @title, caption = @caption, destination_url = @destination_url, status = @status, name = @name, image_url = @image_url, updated_at = @updated_at
+    UPDATE queue_items SET title = @title, caption = @caption, destination_url = @destination_url, status = @status, name = @name, image_url = @image_url, pinterest_pin_id = @pinterest_pin_id, pinterest_pin_url = @pinterest_pin_url, published_at = @published_at, updated_at = @updated_at
     WHERE id = @id
   `).run({ ...next, updated_at: nowIso(), id });
-  return { id, queue, title: next.title, caption: next.caption, destinationUrl: next.destination_url, status: next.status, name: next.name, image_url: next.image_url, url: next.image_url };
+  return { id, queue, title: next.title, caption: next.caption, destinationUrl: next.destination_url, status: next.status, name: next.name, image_url: next.image_url, url: next.image_url, pinterestPinId: next.pinterest_pin_id, pinterestPinUrl: next.pinterest_pin_url, publishedAt: next.published_at };
 }
 
 function getQueueItem(queue, id) {
@@ -184,6 +195,8 @@ function getQueueItem(queue, id) {
     id: row.id, queue: row.queue, name: row.name, title: row.title || "",
     caption: row.caption || "", destinationUrl: row.destination_url || "",
     status: row.status, url: row.image_url, image_url: row.image_url,
+    pinterestPinId: row.pinterest_pin_id || "", pinterestPinUrl: row.pinterest_pin_url || "",
+    publishedAt: row.published_at || "",
   };
 }
 

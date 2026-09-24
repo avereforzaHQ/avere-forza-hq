@@ -51,6 +51,7 @@ fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const CONTENT_FOLDER = process.env.DROPBOX_CONTENT_FOLDER || "/AVERE CONTENT/AF LIBRARY";
 const ZAPIER_PINTEREST_WEBHOOK_URL = process.env.ZAPIER_PINTEREST_WEBHOOK_URL || "";
+const ZAPIER_PINTEREST_CALLBACK_SECRET = process.env.ZAPIER_PINTEREST_CALLBACK_SECRET || "";
 const PROJECT_ROOT = path.join(__dirname, "..");
 
 const IMAGE_EXT = ["jpg", "jpeg", "png", "webp", "gif", "heic"];
@@ -154,6 +155,43 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
+// Public callback used only by Zapier after Pinterest successfully creates a Pin.
+// It is intentionally outside the authenticated /api middleware because Zapier
+// does not have an HQ browser session. A separate high-entropy callback secret
+// must match before any queue data can be changed.
+app.post("/api/publish/pinterest/callback", (req, res) => {
+  if (!ZAPIER_PINTEREST_CALLBACK_SECRET) {
+    return res.status(503).json({ error: "Pinterest callback is not configured yet." });
+  }
+
+  const suppliedSecret = String(req.get("x-af-callback-secret") || req.body?.callback_secret || "");
+  const expectedSecret = String(ZAPIER_PINTEREST_CALLBACK_SECRET);
+  const supplied = Buffer.from(suppliedSecret);
+  const expected = Buffer.from(expectedSecret);
+  if (!suppliedSecret || supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) {
+    return res.status(403).json({ error: "Invalid callback secret." });
+  }
+
+  const queueItemId = String(req.body?.queue_item_id || "").trim();
+  const pinId = String(req.body?.pin_id || req.body?.id || "").trim();
+  if (!queueItemId || !pinId) {
+    return res.status(400).json({ error: "queue_item_id and pin_id are required." });
+  }
+
+  const item = store.getQueueItem("pinterest", queueItemId);
+  if (!item) return res.status(404).json({ error: "Pinterest queue item not found." });
+
+  const pinUrl = `https://www.pinterest.com/pin/${encodeURIComponent(pinId)}/`;
+  const updated = store.updateQueueItem("pinterest", queueItemId, {
+    status: "posted",
+    pinterestPinId: pinId,
+    pinterestPinUrl: pinUrl,
+    publishedAt: new Date().toISOString(),
+  });
+  store.addActivity(`Pinterest confirmed live: ${(item.title || item.caption || item.name).slice(0, 80)}`);
+  return res.json({ success: true, item: updated, pin_url: pinUrl });
+});
+
 // Everything else under /api/ requires a valid session.
 app.use("/api", (req, res, next) => {
   if (PUBLIC_API_PATHS.has(req.path)) return next();
@@ -235,6 +273,8 @@ app.post("/api/queues/:queue/:id/photo", upload.single("photo"), (req, res) => {
   const updated = store.updateQueueItem(req.params.queue, req.params.id, {
     image_url: imageUrl,
     name: req.file.originalname,
+    status: "pending",
+    ...(req.params.queue === "pinterest" ? { pinterestPinId: "", pinterestPinUrl: "", publishedAt: "" } : {}),
   });
   if (!updated) return res.status(404).json({ error: "Queue item not found" });
   res.json(updated);
@@ -251,6 +291,9 @@ app.post("/api/publish/pinterest/:id", async (req, res) => {
 
   const item = store.getQueueItem("pinterest", req.params.id);
   if (!item) return res.status(404).json({ error: "Pinterest queue item not found" });
+  if (["publishing", "submitted", "posted"].includes(item.status)) {
+    return res.status(409).json({ error: `This Pin is already ${item.status} and will not be sent twice.`, item });
+  }
   if (!item.url) return res.status(400).json({ error: "Add an image to this Pinterest slot before publishing." });
 
   let imageUrl = item.url;
@@ -271,6 +314,10 @@ app.post("/api/publish/pinterest/:id", async (req, res) => {
   };
 
   try {
+    // Persist the lock before calling Zapier so a fast double-click or second
+    // browser cannot enqueue the same Pin twice.
+    store.updateQueueItem("pinterest", item.id, { status: "publishing" });
+
     const zap = await fetch(ZAPIER_PINTEREST_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

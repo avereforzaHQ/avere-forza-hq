@@ -185,13 +185,16 @@ function renderQueue(key) {
           <span>${safeName}</span>
           <span class="status-pill status-${escapeHtml(item.status || "pending")}">${escapeHtml(item.status)}</span>
         </div>
+        ${key === "pinterest" && item.pinterestPinUrl ? `<a class="view-pin-link" href="${escapeHtml(item.pinterestPinUrl)}" target="_blank" rel="noopener noreferrer">View Pin ↗</a>` : ""}
         <div class="card-actions">
           <label class="btn-secondary" style="cursor:pointer;">
             Swap photo
             <input type="file" accept="image/*" data-role="swap" />
           </label>
           <button class="btn-primary" data-role="post" ${["posted","submitted","publishing"].includes(item.status) ? "disabled" : ""}>
-            ${key === "pinterest" ? (item.status === "submitted" ? "Sent to Zapier" : "Publish Pin") : (key === "personal" ? "Approve & schedule" : "Confirm slot")}
+            ${key === "pinterest"
+              ? (item.status === "posted" ? "Posted" : item.status === "submitted" ? "Sent to Zapier" : item.status === "publishing" ? "Publishing…" : "Publish Pin")
+              : (key === "personal" ? "Approve & schedule" : "Confirm slot")}
           </button>
         </div>
       </div>
@@ -254,6 +257,17 @@ function renderQueue(key) {
           const result = await postToPinterest(item.id);
           item.status = result.item?.status || result.status || "submitted";
           toast("Pin sent to Zapier", "success");
+
+          // Zapier calls the HQ back after Pinterest actually creates the Pin.
+          // Poll briefly so the card can move from submitted -> posted and show
+          // the live Pinterest link without requiring a manual page refresh.
+          if (item.status === "submitted") {
+            const confirmed = await waitForPinterestCompletion(item.id);
+            if (confirmed) {
+              Object.assign(item, confirmed);
+              if (item.status === "posted") toast("Pin posted on Pinterest", "success");
+            }
+          }
         } catch (err) {
           item.status = "failed";
           toast(err.message || "Couldn't send this Pin to Zapier", "error");
@@ -673,6 +687,21 @@ function renderActivity() {
 async function postToPinterest(queueItemId) {
   return apiSend(`/api/publish/pinterest/${encodeURIComponent(queueItemId)}`, "POST", {});
 }
+
+async function waitForPinterestCompletion(queueItemId, attempts = 12, delayMs = 2500) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+    try {
+      const latest = await apiGet("/api/state");
+      const item = latest.queues?.pinterest?.find(entry => String(entry.id) === String(queueItemId));
+      if (item && ["posted", "failed"].includes(item.status)) return item;
+    } catch (err) {
+      if (String(err?.message || "").includes("Not authenticated")) throw err;
+    }
+  }
+  return null;
+}
+
 async function postToInstagramSpam(imageUrl, caption) {
   console.log("[stub] would post to IG spam account:", caption);
 }
