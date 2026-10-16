@@ -213,3 +213,26 @@ In the same Zap, add **Step 3 → Webhooks by Zapier → POST** after **Pinteres
 - `callback_secret` → paste the exact value of `ZAPIER_PINTEREST_CALLBACK_SECRET` from Render
 
 The callback only runs if Step 2 succeeds. On success the HQ builds the live URL as `https://www.pinterest.com/pin/<PIN_ID>/`, records it, and changes the queue item from `submitted` to `posted`. HQ→Zapier failures are still marked `failed`. A failure inside Pinterest itself stops the Zap before Step 3, so that downstream-error callback can be added separately later if desired.
+
+
+## Instagram image publishing (IG Spam Queue)
+
+The IG Spam Queue now publishes image posts through Zapier using the same server-side pattern as Pinterest. Dropbox remains read-only and Zapier secrets never reach browser JavaScript.
+
+Required Render environment variables:
+
+- `ZAPIER_INSTAGRAM_WEBHOOK_URL` — the Catch Hook URL from the Instagram Zap.
+- `ZAPIER_INSTAGRAM_CALLBACK_SECRET` — a long random secret shared only by Render and Zapier Step 3.
+
+Recommended Zap:
+
+1. **Webhooks by Zapier — Catch Hook** receives `queue_item_id`, `image_url`, and `caption`.
+2. **Instagram for Business — Publish Photo(s)** uses `image_url` as Media and `caption` as Caption.
+3. **Webhooks by Zapier — POST** calls `https://avere-forza-hq.onrender.com/api/publish/instagram/callback` with JSON fields:
+   - `queue_item_id` — Step 1 `queue_item_id`
+   - `instagram_media_id` — Step 2 returned ID/media ID (if present)
+   - `permalink` — Step 2 returned permalink/URL (if present)
+   - `status` — `posted`
+   - `callback_secret` — the same value as `ZAPIER_INSTAGRAM_CALLBACK_SECRET`
+
+The HQ prevents duplicate publishing once a slot is `publishing`, `submitted`, or `posted`. Swapping the image resets the slot to `pending`.

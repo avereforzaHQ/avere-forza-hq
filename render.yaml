@@ -29,6 +29,10 @@ services:
         sync: false
       - key: ZAPIER_PINTEREST_CALLBACK_SECRET
         sync: false
+      - key: ZAPIER_INSTAGRAM_WEBHOOK_URL
+        sync: false
+      - key: ZAPIER_INSTAGRAM_CALLBACK_SECRET
+        sync: false
     disk:
       name: avere-forza-data
       mountPath: /var/data

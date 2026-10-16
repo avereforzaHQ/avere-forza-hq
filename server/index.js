@@ -52,6 +52,8 @@ fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 const CONTENT_FOLDER = process.env.DROPBOX_CONTENT_FOLDER || "/AVERE CONTENT/AF LIBRARY";
 const ZAPIER_PINTEREST_WEBHOOK_URL = process.env.ZAPIER_PINTEREST_WEBHOOK_URL || "";
 const ZAPIER_PINTEREST_CALLBACK_SECRET = process.env.ZAPIER_PINTEREST_CALLBACK_SECRET || "";
+const ZAPIER_INSTAGRAM_WEBHOOK_URL = process.env.ZAPIER_INSTAGRAM_WEBHOOK_URL || "";
+const ZAPIER_INSTAGRAM_CALLBACK_SECRET = process.env.ZAPIER_INSTAGRAM_CALLBACK_SECRET || "";
 const PROJECT_ROOT = path.join(__dirname, "..");
 
 const IMAGE_EXT = ["jpg", "jpeg", "png", "webp", "gif", "heic"];
@@ -192,6 +194,51 @@ app.post("/api/publish/pinterest/callback", (req, res) => {
   return res.json({ success: true, item: updated, pin_url: pinUrl });
 });
 
+// Public callback used only by Zapier after Instagram successfully publishes a photo.
+// It mirrors the Pinterest callback: Zapier does not have an HQ browser session,
+// so a separate high-entropy callback secret must match before any queue data changes.
+app.post("/api/publish/instagram/callback", (req, res) => {
+  if (!ZAPIER_INSTAGRAM_CALLBACK_SECRET) {
+    return res.status(503).json({ error: "Instagram callback is not configured yet." });
+  }
+
+  const suppliedSecret = String(req.get("x-af-callback-secret") || req.body?.callback_secret || "");
+  const expectedSecret = String(ZAPIER_INSTAGRAM_CALLBACK_SECRET);
+  const supplied = Buffer.from(suppliedSecret);
+  const expected = Buffer.from(expectedSecret);
+  if (!suppliedSecret || supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) {
+    return res.status(403).json({ error: "Invalid callback secret." });
+  }
+
+  const queueItemId = String(req.body?.queue_item_id || "").trim();
+  const mediaId = String(req.body?.instagram_media_id || req.body?.media_id || req.body?.instagram_post_id || req.body?.id || "").trim();
+  const permalink = String(req.body?.permalink || req.body?.instagram_permalink || req.body?.url || "").trim();
+  const callbackStatus = String(req.body?.status || "posted").trim().toLowerCase();
+  const callbackError = String(req.body?.error || "").trim();
+
+  if (!queueItemId) {
+    return res.status(400).json({ error: "queue_item_id is required." });
+  }
+
+  const item = store.getQueueItem("spam", queueItemId);
+  if (!item) return res.status(404).json({ error: "IG Spam queue item not found." });
+
+  if (callbackStatus === "failed" || callbackError) {
+    const updated = store.updateQueueItem("spam", queueItemId, { status: "failed" });
+    store.addActivity(`Instagram publish failed: ${(item.caption || item.name).slice(0, 80)}`);
+    return res.json({ success: true, status: "failed", item: updated });
+  }
+
+  const updated = store.updateQueueItem("spam", queueItemId, {
+    status: "posted",
+    instagramMediaId: mediaId,
+    instagramPermalink: permalink,
+    publishedAt: new Date().toISOString(),
+  });
+  store.addActivity(`Instagram confirmed live: ${(item.caption || item.name).slice(0, 80)}`);
+  return res.json({ success: true, item: updated, permalink });
+});
+
 // Everything else under /api/ requires a valid session.
 app.use("/api", (req, res, next) => {
   if (PUBLIC_API_PATHS.has(req.path)) return next();
@@ -275,6 +322,7 @@ app.post("/api/queues/:queue/:id/photo", upload.single("photo"), (req, res) => {
     name: req.file.originalname,
     status: "pending",
     ...(req.params.queue === "pinterest" ? { pinterestPinId: "", pinterestPinUrl: "", publishedAt: "" } : {}),
+    ...(req.params.queue === "spam" ? { instagramMediaId: "", instagramPermalink: "", publishedAt: "" } : {}),
   });
   if (!updated) return res.status(404).json({ error: "Queue item not found" });
   res.json(updated);
@@ -333,6 +381,57 @@ app.post("/api/publish/pinterest/:id", async (req, res) => {
     console.error("Pinterest publish failed:", err);
     store.updateQueueItem("pinterest", item.id, { status: "failed" });
     return res.status(502).json({ error: "Could not send this Pin to Zapier. Check the Zap and try again." });
+  }
+});
+
+// Sends one IG Spam queue item to the private Zapier Catch Hook.
+// As with Pinterest, Zapier acceptance is only an enqueue acknowledgement;
+// the callback route above marks the item "posted" after Instagram succeeds.
+app.post("/api/publish/instagram/:id", async (req, res) => {
+  if (!ZAPIER_INSTAGRAM_WEBHOOK_URL) {
+    return res.status(503).json({ error: "Instagram publishing is not configured yet." });
+  }
+
+  const item = store.getQueueItem("spam", req.params.id);
+  if (!item) return res.status(404).json({ error: "IG Spam queue item not found" });
+  if (["publishing", "submitted", "posted"].includes(item.status)) {
+    return res.status(409).json({ error: `This Instagram post is already ${item.status} and will not be sent twice.`, item });
+  }
+  if (!item.url) return res.status(400).json({ error: "Add an image to this IG Spam slot before publishing." });
+
+  let imageUrl = item.url;
+  if (imageUrl.startsWith("/uploads/")) {
+    const expires = Date.now() + (2 * 60 * 60 * 1000); // 2 hours
+    const sig = publishSignature("spam", item.id, expires);
+    imageUrl = `${req.protocol}://${req.get("host")}/publish-media/spam/${encodeURIComponent(item.id)}?expires=${expires}&sig=${sig}`;
+  } else if (!/^https:\/\//i.test(imageUrl)) {
+    return res.status(400).json({ error: "This image source cannot be published yet." });
+  }
+
+  const payload = {
+    queue_item_id: item.id,
+    image_url: imageUrl,
+    caption: item.caption || "",
+  };
+
+  try {
+    store.updateQueueItem("spam", item.id, { status: "publishing" });
+
+    const zap = await fetch(ZAPIER_INSTAGRAM_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const responseText = await zap.text();
+    if (!zap.ok) throw new Error(`Zapier returned ${zap.status}: ${responseText.slice(0, 300)}`);
+
+    const updated = store.updateQueueItem("spam", item.id, { status: "submitted" });
+    store.addActivity(`Sent IG Spam slot to Zapier: "${(item.caption || item.name).slice(0, 80)}"`);
+    return res.json({ success: true, status: "submitted", item: updated });
+  } catch (err) {
+    console.error("Instagram publish failed:", err);
+    store.updateQueueItem("spam", item.id, { status: "failed" });
+    return res.status(502).json({ error: "Could not send this Instagram post to Zapier. Check the Zap and try again." });
   }
 });
 

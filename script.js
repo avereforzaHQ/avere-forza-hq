@@ -186,6 +186,7 @@ function renderQueue(key) {
           <span class="status-pill status-${escapeHtml(item.status || "pending")}">${escapeHtml(item.status)}</span>
         </div>
         ${key === "pinterest" && item.pinterestPinUrl ? `<a class="view-pin-link" href="${escapeHtml(item.pinterestPinUrl)}" target="_blank" rel="noopener noreferrer">View Pin ↗</a>` : ""}
+        ${key === "spam" && item.instagramPermalink ? `<a class="view-pin-link" href="${escapeHtml(item.instagramPermalink)}" target="_blank" rel="noopener noreferrer">View Post ↗</a>` : ""}
         <div class="card-actions">
           <label class="btn-secondary" style="cursor:pointer;">
             Swap photo
@@ -194,7 +195,9 @@ function renderQueue(key) {
           <button class="btn-primary" data-role="post" ${["posted","submitted","publishing"].includes(item.status) ? "disabled" : ""}>
             ${key === "pinterest"
               ? (item.status === "posted" ? "Posted" : item.status === "submitted" ? "Sent to Zapier" : item.status === "publishing" ? "Publishing…" : "Publish Pin")
-              : (key === "personal" ? "Approve & schedule" : "Confirm slot")}
+              : key === "spam"
+                ? (item.status === "posted" ? "Posted" : item.status === "submitted" ? "Sent to Zapier" : item.status === "publishing" ? "Publishing…" : "Publish Post")
+                : "Approve & schedule"}
           </button>
         </div>
       </div>
@@ -271,6 +274,31 @@ function renderQueue(key) {
         } catch (err) {
           item.status = "failed";
           toast(err.message || "Couldn't send this Pin to Zapier", "error");
+        }
+        renderQueue(key);
+        renderStats();
+        return;
+      }
+
+      if (key === "spam") {
+        if (!item.url) { toast("Add an image to this IG Spam slot first", "error"); return; }
+        try {
+          item.status = "publishing";
+          renderQueue(key);
+          const result = await postToInstagramSpam(item.id);
+          item.status = result.item?.status || result.status || "submitted";
+          toast("Instagram post sent to Zapier", "success");
+
+          if (item.status === "submitted") {
+            const confirmed = await waitForInstagramCompletion(item.id);
+            if (confirmed) {
+              Object.assign(item, confirmed);
+              if (item.status === "posted") toast("Instagram post is live", "success");
+            }
+          }
+        } catch (err) {
+          item.status = "failed";
+          toast(err.message || "Couldn't send this Instagram post to Zapier", "error");
         }
         renderQueue(key);
         renderStats();
@@ -678,9 +706,9 @@ function renderActivity() {
 /* =========================================================
    BACKEND HOOKS
    The Dropbox Content Library and the HQ database are both
-   wired to the real backend in /server. postToPinterest /
-   postToInstagramSpam / postToInstagramReelsAndShorts stay as
-   stand-ins until the social-publishing automation is built —
+   wired to the real backend in /server. Pinterest and IG Spam
+   publish through secure Zapier-backed server endpoints.
+   postToInstagramReelsAndShorts remains a stand-in until video publishing is built —
    that will run through its own Zapier-based integration, kept
    separate from both Dropbox and the HQ database.
 ========================================================= */
@@ -702,8 +730,22 @@ async function waitForPinterestCompletion(queueItemId, attempts = 12, delayMs = 
   return null;
 }
 
-async function postToInstagramSpam(imageUrl, caption) {
-  console.log("[stub] would post to IG spam account:", caption);
+async function postToInstagramSpam(queueItemId) {
+  return apiSend(`/api/publish/instagram/${encodeURIComponent(queueItemId)}`, "POST", {});
+}
+
+async function waitForInstagramCompletion(queueItemId, attempts = 12, delayMs = 2500) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+    try {
+      const latest = await apiGet("/api/state");
+      const item = latest.queues?.spam?.find(entry => String(entry.id) === String(queueItemId));
+      if (item && ["posted", "failed"].includes(item.status)) return item;
+    } catch (err) {
+      if (String(err?.message || "").includes("Not authenticated")) throw err;
+    }
+  }
+  return null;
 }
 async function postToInstagramReelsAndShorts(videoUrl, caption) {
   console.log("[stub] would post to IG Reels + YouTube Shorts:", caption);
