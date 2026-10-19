@@ -387,6 +387,7 @@ tbody tr:hover{ background: var(--panel-2); }
 .autofill-actions{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:16px; }
 .auto-badge{ background:rgba(201,162,75,.14); color:var(--accent-2); }
 .status-awaiting_approval{ background:rgba(201,162,75,.18); color:var(--accent-2); }
+.status-scheduled{ background:rgba(86,132,255,.16); color:#9bb4ff; }
 .status-publishing{ background:rgba(98,139,255,.16); color:#9cb4ff; }
 .status-submitted{ background:rgba(98,139,255,.16); color:#9cb4ff; }
 .status-failed{ background:rgba(224,96,91,.15); color:var(--danger); }
@@ -394,3 +395,14 @@ tbody tr:hover{ background: var(--panel-2); }
   .queue-view-header{ flex-direction:column; }
   .autofill-fields{ grid-template-columns:1fr; }
 }
+
+/* Scheduled auto-post controls */
+.slot-time-label{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);}
+.slot-time-input{background:var(--bg-soft);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 9px;}
+.schedule-summary{padding:9px 10px;border:1px solid rgba(86,132,255,.25);background:rgba(86,132,255,.08);border-radius:9px;font-size:12px;color:var(--text);}
+.autofill-post-times{display:grid;grid-template-columns:1fr repeat(3,minmax(82px,1fr));align-items:center;gap:8px;margin-top:10px;}
+.autofill-post-times span{font-size:12px;color:var(--muted);}
+.autofill-post-times input{width:100%;padding:8px;border-radius:8px;background:var(--bg-soft);border:1px solid var(--border);color:var(--text);}
+@media(max-width:700px){.autofill-post-times{grid-template-columns:1fr 1fr 1fr}.autofill-post-times span{grid-column:1/-1}}
+
+.queue-header-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}

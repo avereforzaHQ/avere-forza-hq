@@ -40,6 +40,9 @@ db.exec(`
     published_at TEXT DEFAULT '',
     assigned_date TEXT DEFAULT '',
     auto_selected INTEGER DEFAULT 0,
+    scheduled_date TEXT DEFAULT '',
+    scheduled_time TEXT DEFAULT '',
+    approved_at TEXT DEFAULT '',
     position INTEGER DEFAULT 0,
     updated_at TEXT NOT NULL
   );
@@ -106,6 +109,9 @@ ensureColumn('queue_items', 'published_at', "TEXT DEFAULT ''");
 ensureColumn('queue_items', 'dropbox_file_id', "TEXT DEFAULT ''");
 ensureColumn('queue_items', 'assigned_date', "TEXT DEFAULT ''");
 ensureColumn('queue_items', 'auto_selected', "INTEGER DEFAULT 0");
+ensureColumn('queue_items', 'scheduled_date', "TEXT DEFAULT ''");
+ensureColumn('queue_items', 'scheduled_time', "TEXT DEFAULT ''");
+ensureColumn('queue_items', 'approved_at', "TEXT DEFAULT ''");
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -182,6 +188,8 @@ function getFullState() {
         instagramMediaId: row.instagram_media_id || "", instagramPermalink: row.instagram_permalink || "",
         publishedAt: row.published_at || "",
         assignedDate: row.assigned_date || "",
+        scheduledDate: row.scheduled_date || "", scheduledTime: row.scheduled_time || "",
+        approvedAt: row.approved_at || "", position: row.position,
         autoSelected: Boolean(row.auto_selected),
       });
     }
@@ -217,6 +225,9 @@ function updateQueueItem(queue, id, fields) {
     instagram_permalink: fields.instagram_permalink ?? fields.instagramPermalink ?? current.instagram_permalink ?? "",
     published_at: fields.published_at ?? fields.publishedAt ?? current.published_at ?? "",
     assigned_date: fields.assigned_date ?? fields.assignedDate ?? current.assigned_date ?? "",
+    scheduled_date: fields.scheduled_date ?? fields.scheduledDate ?? current.scheduled_date ?? "",
+    scheduled_time: fields.scheduled_time ?? fields.scheduledTime ?? current.scheduled_time ?? "",
+    approved_at: fields.approved_at ?? fields.approvedAt ?? current.approved_at ?? "",
     // better-sqlite3 does not accept JavaScript booleans as bound values.
     // Auto-fill passes `autoSelected: true`, so normalise it to SQLite 0/1 here.
     auto_selected: (() => {
@@ -225,10 +236,10 @@ function updateQueueItem(queue, id, fields) {
     })(),
   };
   db.prepare(`
-    UPDATE queue_items SET title = @title, caption = @caption, destination_url = @destination_url, status = @status, name = @name, image_url = @image_url, dropbox_file_id = @dropbox_file_id, pinterest_pin_id = @pinterest_pin_id, pinterest_pin_url = @pinterest_pin_url, instagram_media_id = @instagram_media_id, instagram_permalink = @instagram_permalink, published_at = @published_at, assigned_date = @assigned_date, auto_selected = @auto_selected, updated_at = @updated_at
+    UPDATE queue_items SET title = @title, caption = @caption, destination_url = @destination_url, status = @status, name = @name, image_url = @image_url, dropbox_file_id = @dropbox_file_id, pinterest_pin_id = @pinterest_pin_id, pinterest_pin_url = @pinterest_pin_url, instagram_media_id = @instagram_media_id, instagram_permalink = @instagram_permalink, published_at = @published_at, assigned_date = @assigned_date, scheduled_date = @scheduled_date, scheduled_time = @scheduled_time, approved_at = @approved_at, auto_selected = @auto_selected, updated_at = @updated_at
     WHERE id = @id
   `).run({ ...next, updated_at: nowIso(), id });
-  return { id, queue, title: next.title, caption: next.caption, destinationUrl: next.destination_url, status: next.status, name: next.name, image_url: next.image_url, url: next.image_url, dropboxFileId: next.dropbox_file_id, pinterestPinId: next.pinterest_pin_id, pinterestPinUrl: next.pinterest_pin_url, instagramMediaId: next.instagram_media_id, instagramPermalink: next.instagram_permalink, publishedAt: next.published_at, assignedDate: next.assigned_date, autoSelected: Boolean(next.auto_selected) };
+  return { id, queue, title: next.title, caption: next.caption, destinationUrl: next.destination_url, status: next.status, name: next.name, image_url: next.image_url, url: next.image_url, dropboxFileId: next.dropbox_file_id, pinterestPinId: next.pinterest_pin_id, pinterestPinUrl: next.pinterest_pin_url, instagramMediaId: next.instagram_media_id, instagramPermalink: next.instagram_permalink, publishedAt: next.published_at, assignedDate: next.assigned_date, scheduledDate: next.scheduled_date, scheduledTime: next.scheduled_time, approvedAt: next.approved_at, autoSelected: Boolean(next.auto_selected) };
 }
 
 function getQueueItem(queue, id) {
@@ -243,7 +254,8 @@ function getQueueItem(queue, id) {
     instagramMediaId: row.instagram_media_id || "", instagramPermalink: row.instagram_permalink || "",
     publishedAt: row.published_at || "",
     assignedDate: row.assigned_date || "",
-    autoSelected: Boolean(row.auto_selected),
+    scheduledDate: row.scheduled_date || "", scheduledTime: row.scheduled_time || "", approvedAt: row.approved_at || "",
+    autoSelected: Boolean(row.auto_selected), position: row.position,
   };
 }
 
@@ -257,13 +269,14 @@ function getQueueItems(queue) {
       pinterestPinId: row.pinterest_pin_id || "", pinterestPinUrl: row.pinterest_pin_url || "",
       instagramMediaId: row.instagram_media_id || "", instagramPermalink: row.instagram_permalink || "",
       publishedAt: row.published_at || "", assignedDate: row.assigned_date || "",
+      scheduledDate: row.scheduled_date || "", scheduledTime: row.scheduled_time || "", approvedAt: row.approved_at || "",
       autoSelected: Boolean(row.auto_selected), position: row.position,
     }));
 }
 
 const AUTO_FILL_DEFAULTS = {
-  pinterest: { enabled: false, slots: 3, sourceFolders: [], mediaType: "image", noRepeatDays: 60, fillTime: "07:00", lastRunDate: "" },
-  spam: { enabled: false, slots: 3, sourceFolders: [], mediaType: "image", noRepeatDays: 30, fillTime: "07:00", lastRunDate: "" },
+  pinterest: { enabled: false, slots: 3, sourceFolders: [], mediaType: "image", noRepeatDays: 60, fillTime: "07:00", postTimes: ["09:00","14:00","19:00"], lastRunDate: "" },
+  spam: { enabled: false, slots: 3, sourceFolders: [], mediaType: "image", noRepeatDays: 30, fillTime: "07:00", postTimes: ["11:00","16:00","20:00"], lastRunDate: "" },
 };
 
 function getSetting(key, fallback = null) {
@@ -283,7 +296,9 @@ function normaliseAutoFillConfig(queue, value) {
   const days = Math.max(0, Math.min(3650, Number(raw.noRepeatDays ?? defaults.noRepeatDays) || 0));
   const time = /^\d{2}:\d{2}$/.test(String(raw.fillTime || "")) ? String(raw.fillTime) : defaults.fillTime;
   const sourceFolders = Array.isArray(raw.sourceFolders) ? [...new Set(raw.sourceFolders.map(v => String(v).trim()).filter(Boolean))].slice(0, 100) : [];
-  return { enabled: Boolean(raw.enabled), slots, sourceFolders, mediaType: "image", noRepeatDays: days, fillTime: time, lastRunDate: String(raw.lastRunDate || "") };
+  const rawTimes = Array.isArray(raw.postTimes) ? raw.postTimes : defaults.postTimes;
+  const postTimes = [0,1,2].map(i => /^\d{2}:\d{2}$/.test(String(rawTimes?.[i] || "")) ? String(rawTimes[i]) : defaults.postTimes[i]);
+  return { enabled: Boolean(raw.enabled), slots, sourceFolders, mediaType: "image", noRepeatDays: days, fillTime: time, postTimes, lastRunDate: String(raw.lastRunDate || "") };
 }
 function getAutoFillSettings() {
   const saved = getSetting("auto_fill", {});
@@ -331,6 +346,22 @@ function getCurrentlyQueuedDropboxIds(excludeQueueItemId = "") {
 }
 function getContentUsageSummary() {
   return db.prepare(`SELECT dropbox_file_id, queue, COUNT(*) AS times_used, MAX(selected_at) AS last_queued, MAX(CASE WHEN posted_at <> '' THEN posted_at ELSE NULL END) AS last_posted FROM content_usage GROUP BY dropbox_file_id, queue`).all();
+}
+
+function getDueScheduledItems(date, time) {
+  return db.prepare(`
+    SELECT * FROM queue_items
+    WHERE queue IN ('pinterest','spam')
+      AND status = 'scheduled'
+      AND scheduled_date <> '' AND scheduled_time <> ''
+      AND (scheduled_date < ? OR (scheduled_date = ? AND scheduled_time <= ?))
+    ORDER BY scheduled_date, scheduled_time, queue, position
+  `).all(String(date), String(date), String(time)).map(row => ({
+    id: row.id, queue: row.queue, name: row.name, title: row.title || "", caption: row.caption || "",
+    destinationUrl: row.destination_url || "", status: row.status, url: row.image_url, image_url: row.image_url,
+    dropboxFileId: row.dropbox_file_id || "", assignedDate: row.assigned_date || "", position: row.position,
+    scheduledDate: row.scheduled_date || "", scheduledTime: row.scheduled_time || "", approvedAt: row.approved_at || "",
+  }));
 }
 
 // ---------- influencers ----------
@@ -419,6 +450,7 @@ module.exports = {
   getRecentUsedFileIds,
   getCurrentlyQueuedDropboxIds,
   getContentUsageSummary,
+  getDueScheduledItems,
   createInfluencer,
   updateInfluencer,
   deleteInfluencer,

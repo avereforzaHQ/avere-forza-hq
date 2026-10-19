@@ -113,8 +113,8 @@ const state = {
   dropboxLibrary: [],
   dropboxLastSync: "Not synced yet",
   autoFillSettings: {
-    pinterest: { enabled: false, slots: 3, sourceFolders: [], noRepeatDays: 60, fillTime: "07:00", lastRunDate: "" },
-    spam: { enabled: false, slots: 3, sourceFolders: [], noRepeatDays: 30, fillTime: "07:00", lastRunDate: "" },
+    pinterest: { enabled: false, slots: 3, sourceFolders: [], noRepeatDays: 60, fillTime: "07:00", postTimes: ["09:00","14:00","19:00"], lastRunDate: "" },
+    spam: { enabled: false, slots: 3, sourceFolders: [], noRepeatDays: 30, fillTime: "07:00", postTimes: ["11:00","16:00","20:00"], lastRunDate: "" },
   },
 };
 
@@ -166,6 +166,13 @@ const QUEUE_CONFIG = {
   personal:  { container: "#personal-pending-cards", platform: "Instagram Reels + YouTube Shorts", times: 1 },
 };
 
+function defaultPostTime(key, item) {
+  const defaults = key === "pinterest" ? ["09:00","14:00","19:00"] : ["11:00","16:00","20:00"];
+  const times = state.autoFillSettings?.[key]?.postTimes || defaults;
+  const index = Math.max(0, Math.min(2, Number(item.position || 1) - 1));
+  return item.scheduledTime || times[index] || defaults[index];
+}
+
 function renderQueue(key) {
   const cfg = QUEUE_CONFIG[key];
   const container = qs(cfg.container);
@@ -192,22 +199,19 @@ function renderQueue(key) {
           <span>${safeName}${item.dropboxFileId ? ` <span class="source-badge">Dropbox</span>` : ""}${item.autoSelected ? ` <span class="source-badge auto-badge">Auto-picked</span>` : ""}</span>
           <span class="status-pill status-${escapeHtml(item.status || "pending")}">${escapeHtml(String(item.status || "pending").replace(/_/g, " "))}</span>
         </div>
+        ${["pinterest","spam"].includes(key) && item.status === "scheduled" ? `<div class="schedule-summary">Scheduled for ${escapeHtml(item.scheduledDate || "today")} at <strong>${escapeHtml(item.scheduledTime || defaultPostTime(key, item))}</strong></div>` : ""}
         ${key === "pinterest" && item.pinterestPinUrl ? `<a class="view-pin-link" href="${escapeHtml(item.pinterestPinUrl)}" target="_blank" rel="noopener noreferrer">View Pin ↗</a>` : ""}
         ${key === "spam" && item.instagramPermalink ? `<a class="view-pin-link" href="${escapeHtml(item.instagramPermalink)}" target="_blank" rel="noopener noreferrer">View Post ↗</a>` : ""}
+        ${["pinterest","spam"].includes(key) && !["publishing","submitted","posted"].includes(item.status) ? `<label class="slot-time-label">Post time <input class="slot-time-input" type="time" data-role="schedule-time" value="${escapeHtml(defaultPostTime(key, item))}" ${item.status === "scheduled" ? "disabled" : ""} /></label>` : ""}
         <div class="card-actions">
-          ${["pinterest", "spam"].includes(key) ? `<button class="btn-secondary" type="button" data-role="dropbox">Choose from Dropbox</button>` : ""}
-          ${["pinterest", "spam"].includes(key) && item.autoSelected && !["publishing","submitted","posted"].includes(item.status) ? `<button class="btn-ghost" type="button" data-role="replace-auto">↻ Replace suggestion</button>` : ""}
-          <label class="btn-secondary" style="cursor:pointer;">
-            Upload from Mac
-            <input type="file" accept="image/*" data-role="swap" />
-          </label>
-          <button class="btn-primary" data-role="post" ${["posted","submitted","publishing"].includes(item.status) ? "disabled" : ""}>
-            ${key === "pinterest"
-              ? (item.status === "posted" ? "Posted" : item.status === "submitted" ? "Sent to Zapier" : item.status === "publishing" ? "Publishing…" : "Publish Pin")
-              : key === "spam"
-                ? (item.status === "posted" ? "Posted" : item.status === "submitted" ? "Sent to Zapier" : item.status === "publishing" ? "Publishing…" : "Publish Post")
-                : "Approve & schedule"}
-          </button>
+          ${["pinterest", "spam"].includes(key) && item.status !== "scheduled" ? `<button class="btn-secondary" type="button" data-role="dropbox">Choose from Dropbox</button>` : ""}
+          ${["pinterest", "spam"].includes(key) && item.autoSelected && !["scheduled","publishing","submitted","posted"].includes(item.status) ? `<button class="btn-ghost" type="button" data-role="replace-auto">↻ Replace suggestion</button>` : ""}
+          ${["pinterest", "spam"].includes(key) && item.status !== "scheduled" && !["publishing","submitted","posted"].includes(item.status) ? `<label class="btn-secondary" style="cursor:pointer;">Upload from Mac<input type="file" accept="image/*" data-role="swap" /></label>` : ""}
+          ${["pinterest","spam"].includes(key)
+            ? (item.status === "scheduled"
+                ? `<button class="btn-secondary" type="button" data-role="unschedule">Unschedule</button><button class="btn-primary" disabled>Scheduled · ${escapeHtml(item.scheduledTime || defaultPostTime(key, item))}</button>`
+                : `<button class="btn-ghost" type="button" data-role="post-now" ${["posted","submitted","publishing"].includes(item.status) ? "disabled" : ""}>Post now</button><button class="btn-primary" data-role="schedule" ${["posted","submitted","publishing"].includes(item.status) ? "disabled" : ""}>${item.status === "posted" ? "Posted" : item.status === "submitted" ? "Sent to Zapier" : item.status === "publishing" ? "Publishing…" : "Approve & schedule"}</button>`)
+            : `<button class="btn-primary" data-role="post">Approve & schedule</button>`}
         </div>
       </div>
     `;
@@ -279,61 +283,50 @@ function renderQueue(key) {
       }
     });
 
-    // post / approve
-    card.querySelector('[data-role="post"]').addEventListener("click", async () => {
-      if (key === "pinterest") {
-        if (!item.url) { toast("Add an image to this Pinterest slot first", "error"); return; }
-        try {
-          item.status = "publishing";
-          renderQueue(key);
-          const result = await postToPinterest(item.id);
-          item.status = result.item?.status || result.status || "submitted";
-          toast("Pin sent to Zapier", "success");
-
-          // Zapier calls the HQ back after Pinterest actually creates the Pin.
-          // Poll briefly so the card can move from submitted -> posted and show
-          // the live Pinterest link without requiring a manual page refresh.
-          if (item.status === "submitted") {
-            const confirmed = await waitForPinterestCompletion(item.id);
-            if (confirmed) {
-              Object.assign(item, confirmed);
-              if (item.status === "posted") toast("Pin posted on Pinterest", "success");
-            }
-          }
-        } catch (err) {
-          item.status = "failed";
-          toast(err.message || "Couldn't send this Pin to Zapier", "error");
-        }
-        renderQueue(key);
-        renderStats();
-        return;
+    // Approve once, then let the Render backend publish at the selected time.
+    card.querySelector('[data-role="schedule"]')?.addEventListener("click", async () => {
+      if (!item.url) { toast("Add an image to this slot first", "error"); return; }
+      const time = card.querySelector('[data-role="schedule-time"]')?.value || defaultPostTime(key, item);
+      try {
+        const updated = await apiSend(`/api/schedule/${key}/${encodeURIComponent(item.id)}`, "POST", { time });
+        Object.assign(item, updated);
+        renderQueue(key); renderStats(); renderPlan();
+        toast(`${key === "pinterest" ? "Pinterest" : "Instagram"} approved for ${updated.scheduledTime}`, "success");
+      } catch (err) {
+        toast(err.message || "Couldn't schedule this post", "error");
       }
+    });
 
-      if (key === "spam") {
-        if (!item.url) { toast("Add an image to this IG Spam slot first", "error"); return; }
-        try {
-          item.status = "publishing";
-          renderQueue(key);
-          const result = await postToInstagramSpam(item.id);
-          item.status = result.item?.status || result.status || "submitted";
-          toast("Instagram post sent to Zapier", "success");
+    card.querySelector('[data-role="unschedule"]')?.addEventListener("click", async () => {
+      try {
+        const updated = await apiSend(`/api/schedule/${key}/${encodeURIComponent(item.id)}/cancel`, "POST", {});
+        Object.assign(item, updated);
+        renderQueue(key); renderStats(); renderPlan();
+        toast("Post returned to approval", "success");
+      } catch (err) { toast(err.message || "Couldn't unschedule this post", "error"); }
+    });
 
-          if (item.status === "submitted") {
-            const confirmed = await waitForInstagramCompletion(item.id);
-            if (confirmed) {
-              Object.assign(item, confirmed);
-              if (item.status === "posted") toast("Instagram post is live", "success");
-            }
-          }
-        } catch (err) {
-          item.status = "failed";
-          toast(err.message || "Couldn't send this Instagram post to Zapier", "error");
-        }
-        renderQueue(key);
-        renderStats();
-        return;
+    // Keep the proven immediate publishing path as a manual fallback.
+    card.querySelector('[data-role="post-now"]')?.addEventListener("click", async () => {
+      if (!item.url) { toast("Add an image to this slot first", "error"); return; }
+      try {
+        item.status = "publishing"; renderQueue(key);
+        const result = key === "pinterest" ? await postToPinterest(item.id) : await postToInstagramSpam(item.id);
+        item.status = result.item?.status || result.status || "submitted";
+        toast(key === "pinterest" ? "Pin sent to Zapier" : "Instagram post sent to Zapier", "success");
+        const confirmed = item.status === "submitted"
+          ? (key === "pinterest" ? await waitForPinterestCompletion(item.id) : await waitForInstagramCompletion(item.id))
+          : null;
+        if (confirmed) Object.assign(item, confirmed);
+      } catch (err) {
+        item.status = "failed";
+        toast(err.message || "Couldn't publish this post", "error");
       }
+      renderQueue(key); renderStats(); renderPlan();
+    });
 
+    // Personal workflow remains unchanged.
+    card.querySelector('[data-role="post"]')?.addEventListener("click", async () => {
       try {
         const updated = await apiSend(`/api/queues/${key}/${item.id}`, "PATCH", { status: "posted" });
         item.status = updated.status;
@@ -344,12 +337,8 @@ function renderQueue(key) {
       if (key === "personal") {
         await logActivity(`Approved for Reels + Shorts: "${(item.caption || item.name).slice(0, 60)}"`);
         renderPersonalApproved();
-      } else {
-        await logActivity(`Confirmed a ${cfg.platform} slot: "${(item.caption || item.name).slice(0, 60)}"`);
       }
-      renderQueue(key);
-      renderStats();
-      renderPlan();
+      renderQueue(key); renderStats();
     });
 
     container.appendChild(card);
@@ -655,11 +644,14 @@ function renderAutoFillSettings() {
     const days = qs(`#autofill-${queue}-days`);
     const select = qs(`#autofill-${queue}-folders`);
     const last = qs(`#autofill-${queue}-last`);
+    const postTimes = [1,2,3].map(n => qs(`#autofill-${queue}-post-${n}`));
     if (enabled) enabled.checked = Boolean(cfg.enabled);
     if (slots) slots.value = cfg.slots || 3;
     if (time) time.value = cfg.fillTime || "07:00";
     if (days) days.value = cfg.noRepeatDays ?? (queue === "pinterest" ? 60 : 30);
     if (last) last.textContent = cfg.lastRunDate ? `Last filled ${cfg.lastRunDate}` : "Not run yet";
+    const defaults = queue === "pinterest" ? ["09:00","14:00","19:00"] : ["11:00","16:00","20:00"];
+    postTimes.forEach((input, i) => { if (input) input.value = cfg.postTimes?.[i] || defaults[i]; });
     if (select) {
       const selected = new Set(cfg.sourceFolders || []);
       const available = folders.length ? folders : [...selected];
@@ -675,6 +667,7 @@ function collectAutoFillQueueSettings(queue) {
     slots: Number(qs(`#autofill-${queue}-slots`)?.value || 3),
     fillTime: qs(`#autofill-${queue}-time`)?.value || "07:00",
     noRepeatDays: Number(qs(`#autofill-${queue}-days`)?.value || 0),
+    postTimes: [1,2,3].map(n => qs(`#autofill-${queue}-post-${n}`)?.value || (state.autoFillSettings?.[queue]?.postTimes?.[n-1])),
     sourceFolders: select && select.options.length
       ? [...select.selectedOptions].map(option => option.value)
       : [...(state.autoFillSettings?.[queue]?.sourceFolders || [])],
@@ -721,6 +714,31 @@ async function autoFillToday(queue) {
 qs("#save-autofill-settings")?.addEventListener("click", () => saveAutoFillSettings().catch(err => toast(err.message || "Couldn't save auto-fill settings", "error")));
 qs("#autofill-pinterest-now")?.addEventListener("click", () => autoFillToday("pinterest"));
 qs("#autofill-spam-now")?.addEventListener("click", () => autoFillToday("spam"));
+
+async function approveAllQueue(queue) {
+  const name = queue === "pinterest" ? "Pinterest" : "IG Spam";
+  const candidates = state.queues[queue].filter(item => item.url && !["scheduled","publishing","submitted","posted"].includes(item.status));
+  if (!candidates.length) { toast(`${name}: nothing is waiting for approval`, "default"); return; }
+  const button = qs(`#approve-all-${queue}`);
+  if (button) button.disabled = true;
+  let approved = 0;
+  try {
+    for (const item of candidates) {
+      const time = defaultPostTime(queue, item);
+      try {
+        const updated = await apiSend(`/api/schedule/${queue}/${encodeURIComponent(item.id)}`, "POST", { time });
+        Object.assign(item, updated); approved += 1;
+      } catch (err) {
+        console.error(`Could not schedule ${queue} ${item.id}`, err);
+      }
+    }
+    renderQueue(queue); renderStats(); renderPlan();
+    toast(`${name}: ${approved} post${approved === 1 ? "" : "s"} approved and scheduled`, approved ? "success" : "error");
+  } finally { if (button) button.disabled = false; }
+}
+qs("#approve-all-pinterest")?.addEventListener("click", () => approveAllQueue("pinterest"));
+qs("#approve-all-spam")?.addEventListener("click", () => approveAllQueue("spam"));
+
 
 /* ---------------------- VIDEO IDEAS ---------------------- */
 function renderIdeas() {
@@ -965,26 +983,28 @@ qs("#reset-data-btn").addEventListener("click", async () => {
 /* ---------------------- DASHBOARD ---------------------- */
 function renderStats() {
   const postedCount = key => state.queues[key].filter(i => i.status === "posted").length;
-  const pinterestDone = state.queues.pinterest.filter(i => ["submitted","posted"].includes(i.status)).length;
+  const pinterestDone = state.queues.pinterest.filter(i => ["scheduled","publishing","submitted","posted"].includes(i.status)).length;
   qs("#stat-pinterest").textContent = `${pinterestDone}/3`;
-  qs("#stat-spam").textContent = `${postedCount("spam")}/3`;
+  const spamDone = state.queues.spam.filter(i => ["scheduled","publishing","submitted","posted"].includes(i.status)).length;
+  qs("#stat-spam").textContent = `${spamDone}/3`;
   qs("#stat-personal").textContent = state.queues.personal.filter(i => i.status === "pending").length;
   qs("#stat-influencers").textContent = state.influencers.length;
   qs("#stat-ideas").textContent = state.ideas.length;
 }
 
 function renderPlan() {
-  const plan = [
-    { time: "09:00", text: "Pinterest slot 1", tag: "Pinterest" },
-    { time: "13:00", text: "Pinterest slot 2", tag: "Pinterest" },
-    { time: "18:00", text: "Pinterest slot 3", tag: "Pinterest" },
-    { time: "10:00", text: "IG Spam post 1", tag: "IG Spam" },
-    { time: "15:00", text: "IG Spam post 2", tag: "IG Spam" },
-    { time: "20:00", text: "IG Spam post 3", tag: "IG Spam" },
-    { time: "On approval", text: "Personal Reel / Short", tag: "Personal" },
-  ];
+  const plan = [];
+  [["pinterest","Pinterest"],["spam","IG Spam"]].forEach(([key,label]) => {
+    const defaults = key === "pinterest" ? ["09:00","14:00","19:00"] : ["11:00","16:00","20:00"];
+    state.queues[key].slice(0,3).forEach((item, i) => {
+      const time = item.scheduledTime || state.autoFillSettings?.[key]?.postTimes?.[i] || defaults[i];
+      const stateLabel = item.status === "scheduled" ? "Scheduled" : item.status === "posted" ? "Posted" : item.status === "submitted" ? "Sent" : "Awaiting approval";
+      plan.push({ time, text: `${label} slot ${i+1} · ${stateLabel}` });
+    });
+  });
+  plan.push({ time: "On approval", text: "Personal Reel / Short" });
   const list = qs("#plan-list");
-  list.innerHTML = plan.map(p => `<li><span>${p.text}</span><span class="tag">${p.time}</span></li>`).join("");
+  list.innerHTML = plan.map(p => `<li><span>${escapeHtml(p.text)}</span><span class="tag">${escapeHtml(p.time)}</span></li>`).join("");
 }
 
 function renderActivity() {
@@ -1089,3 +1109,17 @@ async function init() {
   refreshDropboxLibrary({ silent: true });
 }
 init();
+
+
+// Keep long-open HQ tabs in sync with background scheduled publishing/callbacks.
+setInterval(async () => {
+  if (document.hidden) return;
+  try {
+    const fresh = await apiGet("/api/state");
+    state.queues = fresh.queues;
+    state.activity = fresh.activity;
+    renderQueue("pinterest"); renderQueue("spam"); renderStats(); renderPlan(); renderActivity();
+  } catch (err) {
+    if (String(err?.message || "").includes("Not authenticated")) return;
+  }
+}, 30000);

@@ -88,9 +88,9 @@
       <div class="view-header queue-view-header">
         <div>
           <h3>Pinterest Queue — Brand Account</h3>
-          <p class="subtext">Dropbox can prepare your daily image suggestions automatically. Nothing publishes until you review a slot and press Publish Pin.</p>
+          <p class="subtext">Dropbox prepares the day’s suggestions. Approve a slot once and the HQ will publish it automatically at its scheduled time.</p>
         </div>
-        <button class="btn-secondary" id="autofill-pinterest-now">🎲 Auto-fill today</button>
+        <div class="queue-header-actions"><button class="btn-secondary" id="autofill-pinterest-now">🎲 Auto-fill today</button><button class="btn-primary" id="approve-all-pinterest">✓ Approve all</button></div>
       </div>
       <div class="card-grid" id="pinterest-cards"></div>
     </section>
@@ -100,9 +100,9 @@
       <div class="view-header queue-view-header">
         <div>
           <h3>IG Spam Account Queue</h3>
-          <p class="subtext">A separate daily Dropbox rotation for the archive account. Suggestions wait for your approval before anything is sent to Instagram.</p>
+          <p class="subtext">A separate daily Dropbox rotation for the archive account. Approve a slot once and the HQ will post it automatically at the scheduled time.</p>
         </div>
-        <button class="btn-secondary" id="autofill-spam-now">🎲 Auto-fill today</button>
+        <div class="queue-header-actions"><button class="btn-secondary" id="autofill-spam-now">🎲 Auto-fill today</button><button class="btn-primary" id="approve-all-spam">✓ Approve all</button></div>
       </div>
       <div class="card-grid" id="spam-cards"></div>
     </section>
@@ -216,7 +216,7 @@
 
       <div class="panel">
         <h3>Daily Dropbox Auto-fill</h3>
-        <p class="subtext">Let the HQ prepare each day's queue from Dropbox, then wait for your approval. Auto-fill never posts anything and never modifies Dropbox.</p>
+        <p class="subtext">Let the HQ prepare each day's queue from Dropbox. Nothing is scheduled until you approve it; approved slots auto-post at the times below. Dropbox remains read-only.</p>
         <div class="autofill-grid">
           <div class="autofill-card" data-autofill-card="pinterest">
             <div class="autofill-card-head">
@@ -228,6 +228,7 @@
               <label>Fill time<input type="time" id="autofill-pinterest-time" value="07:00" /></label>
               <label>No-repeat window<input type="number" min="0" max="3650" id="autofill-pinterest-days" value="60" /><span>days</span></label>
             </div>
+            <div class="autofill-post-times"><span>Approved posting times</span><input type="time" id="autofill-pinterest-post-1" value="09:00" /><input type="time" id="autofill-pinterest-post-2" value="14:00" /><input type="time" id="autofill-pinterest-post-3" value="19:00" /></div>
             <label class="autofill-folder-label">Source folders
               <select multiple id="autofill-pinterest-folders" class="autofill-folder-select"></select>
               <small>Leave all folders unselected to use all image folders under /AVERE CONTENT.</small>
@@ -244,6 +245,7 @@
               <label>Fill time<input type="time" id="autofill-spam-time" value="07:00" /></label>
               <label>No-repeat window<input type="number" min="0" max="3650" id="autofill-spam-days" value="30" /><span>days</span></label>
             </div>
+            <div class="autofill-post-times"><span>Approved posting times</span><input type="time" id="autofill-spam-post-1" value="11:00" /><input type="time" id="autofill-spam-post-2" value="16:00" /><input type="time" id="autofill-spam-post-3" value="20:00" /></div>
             <label class="autofill-folder-label">Source folders
               <select multiple id="autofill-spam-folders" class="autofill-folder-select"></select>
               <small>Leave all folders unselected to use all image folders under /AVERE CONTENT.</small>

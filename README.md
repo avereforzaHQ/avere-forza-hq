@@ -307,3 +307,16 @@ A lightweight server-side scheduler checks once per minute. Its last-run date is
 ### Daily slot rollover
 
 Auto-fill treats `publishing` items as protected. `submitted` and `posted` items are protected only when they were assigned today. Older/legacy submitted or posted slots are recyclable on the next day's fill, so stale queue state cannot permanently block Pinterest slots 2 and 3.
+
+
+## Approved scheduled auto-posting
+
+Pinterest and IG Spam now use an approval gate before automatic publishing. Dropbox auto-fill still only prepares suggestions. Each queue card has a post-time field and an **Approve & schedule** action. Once approved, the server records the Europe/London date/time in SQLite and a background scheduler checks due items every 30 seconds. Due Pinterest items use the existing `ZAPIER_PINTEREST_WEBHOOK_URL`; due Instagram items use the existing `ZAPIER_INSTAGRAM_WEBHOOK_URL`. Their existing Zapier callbacks still mark the item `posted`.
+
+Default posting times can be changed under **Settings → Daily Dropbox Auto-fill**:
+- Pinterest: 09:00, 14:00, 19:00
+- IG Spam: 11:00, 16:00, 20:00
+
+Nothing is scheduled until the user explicitly clicks **Approve & schedule**. A **Post now** fallback remains available. Scheduled items can be unscheduled before they start publishing.
+
+`PUBLIC_BASE_URL` is optional. It defaults to Render's external URL (or the current Avere HQ URL) and is only needed to expose locally uploaded images to Zapier during a scheduled publish. Dropbox-backed queue items use fresh temporary Dropbox links.
