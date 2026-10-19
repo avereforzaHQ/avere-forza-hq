@@ -303,3 +303,7 @@ Selection history is stored in SQLite (`content_usage`) with the Dropbox file ID
 ### Scheduler behaviour on Render
 
 A lightweight server-side scheduler checks once per minute. Its last-run date is persisted in SQLite, so redeploys/restarts do not cause duplicate daily fills. No new Render environment variables are required for auto-fill; the existing `/var/data` persistent disk stores the settings/history.
+
+### Daily slot rollover
+
+Auto-fill treats `publishing` items as protected. `submitted` and `posted` items are protected only when they were assigned today. Older/legacy submitted or posted slots are recyclable on the next day's fill, so stale queue state cannot permanently block Pinterest slots 2 and 3.

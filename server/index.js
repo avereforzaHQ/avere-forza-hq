@@ -672,7 +672,9 @@ async function runAutoFill(queue, { force = false, initiatedBy = "manual" } = {}
 
   const { catalog } = await syncCatalog();
   const queueItems = store.getQueueItems(queue).slice(0, config.slots);
-  const protectedStatuses = new Set(["publishing", "submitted"]);
+  // Publishing is always protected. Submitted/posted slots are only protected
+  // when they belong to today's allocation. Older/legacy submitted slots must
+  // be recyclable so a new day's auto-fill can populate every configured slot.
   // Snapshot everything assigned before the run too, so replacing old slots
   // cannot make yesterday's asset immediately eligible for a later slot.
   const selectedThisRun = store.getCurrentlyQueuedDropboxIds("");
@@ -680,8 +682,12 @@ async function runAutoFill(queue, { force = false, initiatedBy = "manual" } = {}
   const skipped = [];
 
   for (const item of queueItems) {
-    if (protectedStatuses.has(item.status)) {
-      skipped.push({ id: item.id, reason: item.status });
+    if (item.status === "publishing") {
+      skipped.push({ id: item.id, reason: "publishing" });
+      continue;
+    }
+    if (item.status === "submitted" && item.assignedDate === today) {
+      skipped.push({ id: item.id, reason: "submitted_today" });
       continue;
     }
     if (item.status === "posted" && item.assignedDate === today) {
