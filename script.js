@@ -182,14 +182,15 @@ function renderQueue(key) {
         <textarea placeholder="${key === "pinterest" ? "Pinterest description..." : "Write a caption..."}" data-role="caption">${escapeHtml(item.caption ?? "")}</textarea>
         ${key === "pinterest" ? `<input class="queue-text-input" type="url" placeholder="Destination link (optional)" data-role="destination-url" value="${escapeHtml(item.destinationUrl ?? "")}" />` : ""}
         <div class="post-card-meta">
-          <span>${safeName}</span>
+          <span>${safeName}${item.dropboxFileId ? ` <span class="source-badge">Dropbox</span>` : ""}</span>
           <span class="status-pill status-${escapeHtml(item.status || "pending")}">${escapeHtml(item.status)}</span>
         </div>
         ${key === "pinterest" && item.pinterestPinUrl ? `<a class="view-pin-link" href="${escapeHtml(item.pinterestPinUrl)}" target="_blank" rel="noopener noreferrer">View Pin ↗</a>` : ""}
         ${key === "spam" && item.instagramPermalink ? `<a class="view-pin-link" href="${escapeHtml(item.instagramPermalink)}" target="_blank" rel="noopener noreferrer">View Post ↗</a>` : ""}
         <div class="card-actions">
+          ${["pinterest", "spam"].includes(key) ? `<button class="btn-secondary" type="button" data-role="dropbox">Choose from Dropbox</button>` : ""}
           <label class="btn-secondary" style="cursor:pointer;">
-            Swap photo
+            Upload from Mac
             <input type="file" accept="image/*" data-role="swap" />
           </label>
           <button class="btn-primary" data-role="post" ${["posted","submitted","publishing"].includes(item.status) ? "disabled" : ""}>
@@ -233,6 +234,12 @@ function renderQueue(key) {
           toast("Couldn't save that caption — check the server is running", "error");
         }
       }, 500);
+    });
+
+    // choose a media asset directly from the read-only Dropbox Content Library.
+    // This stores only a reference in the HQ database; Dropbox itself is never changed.
+    card.querySelector('[data-role="dropbox"]')?.addEventListener("click", () => {
+      openDropboxPicker(key, item.id);
     });
 
     // swap photo — uploaded to the server so it persists across reloads/devices
@@ -364,6 +371,112 @@ function wireFolderUpload(inputId, folderKey, countId) {
 wireFolderUpload("#upload-pinterest", "pinterest", "#count-pinterest");
 wireFolderUpload("#upload-spam", "spam", "#count-spam");
 wireFolderUpload("#upload-personal", "personal", "#count-personal");
+
+/* ---------------------- DROPBOX QUEUE PICKER ----------------------
+   Lets an exact Pinterest or IG Spam slot choose an existing image from
+   the live Dropbox Content Library. The file stays in Dropbox; the HQ
+   stores only its Dropbox file ID and uses a fresh temporary read-only
+   link later when publishing through Zapier.
+--------------------------------------------------------------------- */
+let dropboxPickerTarget = null;
+
+function ensureDropboxPicker() {
+  let backdrop = qs("#dropbox-picker-backdrop");
+  if (backdrop) return backdrop;
+
+  backdrop = document.createElement("div");
+  backdrop.id = "dropbox-picker-backdrop";
+  backdrop.className = "modal-backdrop";
+  backdrop.innerHTML = `
+    <div class="modal dropbox-picker-modal" role="dialog" aria-modal="true" aria-labelledby="dropbox-picker-title">
+      <div class="dropbox-picker-heading">
+        <div>
+          <h3 id="dropbox-picker-title">Choose from Dropbox</h3>
+          <p class="subtext">Select an image from /AVERE CONTENT/AF LIBRARY. Your Dropbox file stays untouched.</p>
+        </div>
+        <button class="btn-ghost" type="button" data-role="close-picker">Close</button>
+      </div>
+      <input class="dropbox-picker-search" type="search" placeholder="Search file names…" data-role="picker-search" />
+      <div class="dropbox-picker-grid" data-role="picker-grid"></div>
+    </div>
+  `;
+  document.body.appendChild(backdrop);
+
+  backdrop.querySelector('[data-role="close-picker"]').addEventListener("click", closeDropboxPicker);
+  backdrop.addEventListener("click", e => {
+    if (e.target === backdrop) closeDropboxPicker();
+  });
+  backdrop.querySelector('[data-role="picker-search"]').addEventListener("input", e => {
+    renderDropboxPickerAssets(e.target.value);
+  });
+  return backdrop;
+}
+
+function closeDropboxPicker() {
+  const backdrop = qs("#dropbox-picker-backdrop");
+  backdrop?.classList.remove("active");
+  dropboxPickerTarget = null;
+}
+
+function renderDropboxPickerAssets(searchText = "") {
+  const backdrop = ensureDropboxPicker();
+  const grid = backdrop.querySelector('[data-role="picker-grid"]');
+  const query = String(searchText || "").trim().toLowerCase();
+  const files = state.dropboxLibrary.filter(file =>
+    file.isImage && (!query || String(file.name || "").toLowerCase().includes(query))
+  );
+
+  if (!files.length) {
+    grid.innerHTML = `<p class="empty-note">No matching images found in the Dropbox Content Library.</p>`;
+    return;
+  }
+
+  grid.innerHTML = files.map(file => `
+    <button class="dropbox-picker-item" type="button" data-file-id="${escapeHtml(file.id)}">
+      ${file.thumbnailUrl
+        ? `<img src="${escapeHtml(file.thumbnailUrl)}" alt="${escapeHtml(file.name)}" />`
+        : `<div class="dropbox-picker-placeholder">${escapeHtml(file.ext || "IMG")}</div>`}
+      <span title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
+    </button>
+  `).join("");
+
+  grid.querySelectorAll("[data-file-id]").forEach(button => {
+    button.addEventListener("click", async () => {
+      if (!dropboxPickerTarget) return;
+      const { queueKey, itemId } = dropboxPickerTarget;
+      const fileId = button.dataset.fileId;
+      button.disabled = true;
+      try {
+        const updated = await apiSend(`/api/queues/${queueKey}/${encodeURIComponent(itemId)}/dropbox`, "POST", { fileId });
+        const item = state.queues[queueKey].find(entry => String(entry.id) === String(itemId));
+        if (item) Object.assign(item, updated);
+        closeDropboxPicker();
+        renderQueue(queueKey);
+        renderStats();
+        toast(`Selected ${updated.name} from Dropbox`, "success");
+      } catch (err) {
+        button.disabled = false;
+        toast(err.message || "Couldn't use that Dropbox image", "error");
+      }
+    });
+  });
+}
+
+async function openDropboxPicker(queueKey, itemId) {
+  if (!["pinterest", "spam"].includes(queueKey)) return;
+  const backdrop = ensureDropboxPicker();
+  const queueName = queueKey === "pinterest" ? "Pinterest" : "IG Spam";
+  const item = state.queues[queueKey].find(entry => String(entry.id) === String(itemId));
+  backdrop.querySelector("#dropbox-picker-title").textContent = `Choose Dropbox image — ${queueName}${item?.name ? ` · ${item.name}` : ""}`;
+  backdrop.querySelector('[data-role="picker-search"]').value = "";
+  backdrop.querySelector('[data-role="picker-grid"]').innerHTML = `<p class="empty-note">Refreshing Dropbox library…</p>`;
+  dropboxPickerTarget = { queueKey, itemId };
+  backdrop.classList.add("active");
+
+  await refreshDropboxLibrary({ silent: true });
+  if (!dropboxPickerTarget) return;
+  renderDropboxPickerAssets();
+}
 
 /* ---------------------- DROPBOX CONTENT LIBRARY ----------------------
    Read-only — Dropbox is the source of truth for media, on purpose kept

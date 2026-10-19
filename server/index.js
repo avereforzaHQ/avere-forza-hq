@@ -319,12 +319,58 @@ app.post("/api/queues/:queue/:id/photo", upload.single("photo"), (req, res) => {
   const imageUrl = `/uploads/${req.file.filename}`;
   const updated = store.updateQueueItem(req.params.queue, req.params.id, {
     image_url: imageUrl,
+    dropboxFileId: "",
     name: req.file.originalname,
     status: "pending",
     ...(req.params.queue === "pinterest" ? { pinterestPinId: "", pinterestPinUrl: "", publishedAt: "" } : {}),
     ...(req.params.queue === "spam" ? { instagramMediaId: "", instagramPermalink: "", publishedAt: "" } : {}),
   });
   if (!updated) return res.status(404).json({ error: "Queue item not found" });
+  res.json(updated);
+});
+
+// Assigns an existing Dropbox image to a queue slot without copying, moving,
+// renaming, or otherwise modifying the Dropbox file. The HQ stores only the
+// Dropbox file ID plus a private thumbnail URL for the dashboard. At publish
+// time, the server mints a fresh short-lived Dropbox download link.
+app.post("/api/queues/:queue/:id/dropbox", async (req, res) => {
+  const queue = req.params.queue;
+  if (!["pinterest", "spam"].includes(queue)) {
+    return res.status(400).json({ error: "Dropbox selection is currently available for Pinterest and IG Spam queues." });
+  }
+
+  const fileId = String(req.body?.fileId || "").trim();
+  if (!fileId) return res.status(400).json({ error: "A Dropbox file ID is required." });
+
+  let catalog = loadCatalog();
+  let file = catalog.files[fileId];
+  if (!file) {
+    try {
+      const synced = await syncCatalog();
+      catalog = synced.catalog;
+      file = catalog.files[fileId];
+    } catch (err) {
+      console.error("Dropbox queue assignment refresh failed:", err);
+    }
+  }
+
+  if (!file) return res.status(404).json({ error: "That Dropbox file is no longer in the content library." });
+  if (!file.isImage) return res.status(400).json({ error: "Choose an image file for this queue slot." });
+
+  const existing = store.getQueueItem(queue, req.params.id);
+  if (!existing) return res.status(404).json({ error: "Queue item not found" });
+
+  const previewUrl = `/api/dropbox-thumbnail?id=${encodeURIComponent(file.id)}`;
+  const updated = store.updateQueueItem(queue, req.params.id, {
+    image_url: previewUrl,
+    dropboxFileId: file.id,
+    name: file.name,
+    status: "pending",
+    ...(queue === "pinterest" ? { pinterestPinId: "", pinterestPinUrl: "", publishedAt: "" } : {}),
+    ...(queue === "spam" ? { instagramMediaId: "", instagramPermalink: "", publishedAt: "" } : {}),
+  });
+
+  store.addActivity(`Selected Dropbox image for ${queue === "pinterest" ? "Pinterest" : "IG Spam"}: "${file.name.slice(0, 100)}"`);
   res.json(updated);
 });
 
@@ -345,7 +391,19 @@ app.post("/api/publish/pinterest/:id", async (req, res) => {
   if (!item.url) return res.status(400).json({ error: "Add an image to this Pinterest slot before publishing." });
 
   let imageUrl = item.url;
-  if (imageUrl.startsWith("/uploads/")) {
+  if (item.dropboxFileId) {
+    const catalog = loadCatalog();
+    const file = catalog.files[item.dropboxFileId];
+    if (!file || !file.isImage) {
+      return res.status(400).json({ error: "The selected Dropbox image is no longer available. Choose it again from the Content Library." });
+    }
+    try {
+      imageUrl = await getTemporaryLink(file.path);
+    } catch (err) {
+      console.error("Dropbox temporary link failed during publish:", err);
+      return res.status(502).json({ error: "Could not prepare the selected Dropbox image for publishing. Refresh the Content Library and try again." });
+    }
+  } else if (imageUrl.startsWith("/uploads/")) {
     const expires = Date.now() + (2 * 60 * 60 * 1000); // 2 hours
     const sig = publishSignature("pinterest", item.id, expires);
     imageUrl = `${req.protocol}://${req.get("host")}/publish-media/pinterest/${encodeURIComponent(item.id)}?expires=${expires}&sig=${sig}`;
@@ -400,7 +458,19 @@ app.post("/api/publish/instagram/:id", async (req, res) => {
   if (!item.url) return res.status(400).json({ error: "Add an image to this IG Spam slot before publishing." });
 
   let imageUrl = item.url;
-  if (imageUrl.startsWith("/uploads/")) {
+  if (item.dropboxFileId) {
+    const catalog = loadCatalog();
+    const file = catalog.files[item.dropboxFileId];
+    if (!file || !file.isImage) {
+      return res.status(400).json({ error: "The selected Dropbox image is no longer available. Choose it again from the Content Library." });
+    }
+    try {
+      imageUrl = await getTemporaryLink(file.path);
+    } catch (err) {
+      console.error("Dropbox temporary link failed during publish:", err);
+      return res.status(502).json({ error: "Could not prepare the selected Dropbox image for publishing. Refresh the Content Library and try again." });
+    }
+  } else if (imageUrl.startsWith("/uploads/")) {
     const expires = Date.now() + (2 * 60 * 60 * 1000); // 2 hours
     const sig = publishSignature("spam", item.id, expires);
     imageUrl = `${req.protocol}://${req.get("host")}/publish-media/spam/${encodeURIComponent(item.id)}?expires=${expires}&sig=${sig}`;

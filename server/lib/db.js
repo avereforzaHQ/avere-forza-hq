@@ -32,6 +32,7 @@ db.exec(`
     destination_url TEXT DEFAULT '',
     status TEXT DEFAULT 'pending', -- 'pending' | 'publishing' | 'submitted' | 'posted' | 'failed'
     image_url TEXT,
+    dropbox_file_id TEXT DEFAULT '',
     pinterest_pin_id TEXT DEFAULT '',
     pinterest_pin_url TEXT DEFAULT '',
     instagram_media_id TEXT DEFAULT '',
@@ -81,6 +82,7 @@ ensureColumn('queue_items', 'pinterest_pin_url', "TEXT DEFAULT ''");
 ensureColumn('queue_items', 'instagram_media_id', "TEXT DEFAULT ''");
 ensureColumn('queue_items', 'instagram_permalink', "TEXT DEFAULT ''");
 ensureColumn('queue_items', 'published_at', "TEXT DEFAULT ''");
+ensureColumn('queue_items', 'dropbox_file_id', "TEXT DEFAULT ''");
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -152,6 +154,7 @@ function getFullState() {
       queues[row.queue].push({
         id: row.id, name: row.name, title: row.title || "", caption: row.caption,
         destinationUrl: row.destination_url || "", status: row.status, url: row.image_url,
+        dropboxFileId: row.dropbox_file_id || "",
         pinterestPinId: row.pinterest_pin_id || "", pinterestPinUrl: row.pinterest_pin_url || "",
         instagramMediaId: row.instagram_media_id || "", instagramPermalink: row.instagram_permalink || "",
         publishedAt: row.published_at || "",
@@ -182,6 +185,7 @@ function updateQueueItem(queue, id, fields) {
     status: fields.status ?? current.status,
     name: fields.name ?? current.name,
     image_url: fields.image_url ?? current.image_url,
+    dropbox_file_id: fields.dropbox_file_id ?? fields.dropboxFileId ?? current.dropbox_file_id ?? "",
     pinterest_pin_id: fields.pinterest_pin_id ?? fields.pinterestPinId ?? current.pinterest_pin_id ?? "",
     pinterest_pin_url: fields.pinterest_pin_url ?? fields.pinterestPinUrl ?? current.pinterest_pin_url ?? "",
     instagram_media_id: fields.instagram_media_id ?? fields.instagramMediaId ?? current.instagram_media_id ?? "",
@@ -189,10 +193,10 @@ function updateQueueItem(queue, id, fields) {
     published_at: fields.published_at ?? fields.publishedAt ?? current.published_at ?? "",
   };
   db.prepare(`
-    UPDATE queue_items SET title = @title, caption = @caption, destination_url = @destination_url, status = @status, name = @name, image_url = @image_url, pinterest_pin_id = @pinterest_pin_id, pinterest_pin_url = @pinterest_pin_url, instagram_media_id = @instagram_media_id, instagram_permalink = @instagram_permalink, published_at = @published_at, updated_at = @updated_at
+    UPDATE queue_items SET title = @title, caption = @caption, destination_url = @destination_url, status = @status, name = @name, image_url = @image_url, dropbox_file_id = @dropbox_file_id, pinterest_pin_id = @pinterest_pin_id, pinterest_pin_url = @pinterest_pin_url, instagram_media_id = @instagram_media_id, instagram_permalink = @instagram_permalink, published_at = @published_at, updated_at = @updated_at
     WHERE id = @id
   `).run({ ...next, updated_at: nowIso(), id });
-  return { id, queue, title: next.title, caption: next.caption, destinationUrl: next.destination_url, status: next.status, name: next.name, image_url: next.image_url, url: next.image_url, pinterestPinId: next.pinterest_pin_id, pinterestPinUrl: next.pinterest_pin_url, instagramMediaId: next.instagram_media_id, instagramPermalink: next.instagram_permalink, publishedAt: next.published_at };
+  return { id, queue, title: next.title, caption: next.caption, destinationUrl: next.destination_url, status: next.status, name: next.name, image_url: next.image_url, url: next.image_url, dropboxFileId: next.dropbox_file_id, pinterestPinId: next.pinterest_pin_id, pinterestPinUrl: next.pinterest_pin_url, instagramMediaId: next.instagram_media_id, instagramPermalink: next.instagram_permalink, publishedAt: next.published_at };
 }
 
 function getQueueItem(queue, id) {
@@ -202,6 +206,7 @@ function getQueueItem(queue, id) {
     id: row.id, queue: row.queue, name: row.name, title: row.title || "",
     caption: row.caption || "", destinationUrl: row.destination_url || "",
     status: row.status, url: row.image_url, image_url: row.image_url,
+    dropboxFileId: row.dropbox_file_id || "",
     pinterestPinId: row.pinterest_pin_id || "", pinterestPinUrl: row.pinterest_pin_url || "",
     instagramMediaId: row.instagram_media_id || "", instagramPermalink: row.instagram_permalink || "",
     publishedAt: row.published_at || "",

@@ -67,28 +67,46 @@ A single-user login screen (`login.html`) sits in front of the entire dashboard.
 
 The server only ever calls Dropbox's `list_folder`, `get_thumbnail_v2`, and `get_temporary_link` — all read-only. There is no code path anywhere that renames, moves, uploads, edits, or deletes a Dropbox file. Credentials (`DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN`, `DROPBOX_CONTENT_FOLDER`) live only in server environment variables — never in `index.html`, `script.js`, browser storage, or a URL, and never committed to the project. The Content Library now describes itself in the dashboard as the live view of `/AVERE CONTENT/AF LIBRARY`, not a one-off test import.
 
-## 5. Upload hardening
+## 5. Choose queue media directly from Dropbox
+
+Pinterest and IG Spam queue slots now include a **Choose from Dropbox** button. Clicking it opens a searchable picker backed by the live `/AVERE CONTENT/AF LIBRARY` catalogue. Selecting an image:
+
+- does **not** copy, move, rename, upload, edit, or delete anything in Dropbox;
+- stores only the Dropbox file ID in the HQ database;
+- resets that queue slot to `pending` and clears any previous platform post ID/URL for that slot;
+- shows the Dropbox thumbnail in the queue card; and
+- at publish time, asks Dropbox for a fresh short-lived read-only link and sends that temporary URL to Zapier.
+
+Uploading from the Mac still works as a fallback via **Upload from Mac**. Choosing a local upload automatically clears the previous Dropbox reference for that slot.
+
+This means the normal content workflow is now:
+
+`Dropbox Content Library → Choose from Dropbox → Pinterest / IG Spam queue → Publish → Zapier → social platform`
+
+Dropbox remains strictly read-only throughout. No new environment variables are required for this feature.
+
+## 6. Upload hardening
 
 Queue photo uploads keep the existing 25 MB size limit, and now also check server-side that the uploaded file is actually an image (`image/jpeg`, `png`, `webp`, `gif`, or `heic`/`heif`) before it's saved. The frontend's `accept="image/*"` was always just a UI hint — a visitor could previously bypass it and upload any file type directly to the upload endpoint. That's now rejected by the server itself with a clear error message, regardless of what the browser sends.
 
-## 6. Stored text is now escaped before display
+## 7. Stored text is now escaped before display
 
 Anywhere the dashboard displays a value someone typed or that came from Dropbox — captions, video ideas, influencer names/notes, activity log lines, Dropbox filenames — that value is passed through a small `escapeHtml()` helper in `script.js` before being inserted into the page. This means a caption or influencer note can never be interpreted as HTML or JavaScript by the browser, even if it contains characters like `<` or `"`. Nothing about how the dashboard looks or behaves changed — this is purely a safety net around how existing data is displayed.
 
-## 7. Wording corrections
+## 8. Wording corrections
 
 - The sidebar footer no longer says data is "stored privately in this browser" — it now correctly says editable HQ data is stored securely on the server, and Dropbox media stays read-only.
 - The Danger Zone description no longer says data is stored "in this browser" — it now says it wipes queues, ideas, and influencer records stored on the server.
 - The Dropbox Content Library section no longer describes itself as a "first test" importing 5 files — it now describes itself as the live view of `/AVERE CONTENT/AF LIBRARY`, refreshed on demand.
 
-## 8. Dependency and Node version pinning
+## 9. Dependency and Node version pinning
 
 - **Node version is pinned to Node 24** — both `.node-version` (repository root) and `server/package.json`'s `"engines": { "node": "24.x" }` specify Node 24 specifically, not an open-ended `>=18`. Render reads `.node-version` automatically and provisions that Node major version; `engines.node` backs that up so a plain `npm install` also warns if run on the wrong version. This means the project won't silently jump to Node 25 or later when it's released.
 - **Multer upgraded** from `^1.4.5-lts.1` to `^2.2.0`. Multer 2's public API for the pieces this project uses — `multer.diskStorage`, the `limits.fileSize` cap, `fileFilter`, and `upload.single("photo")` — is unchanged from Multer 1, so no code changes were needed in `server/index.js`; the 25 MB size limit and the server-side image-only check both continue to work exactly as before.
 - **Express and express-session bumped** to their current stable releases within the same major versions already in use (`express` ^4.21.2, `express-session` ^1.18.1) — no breaking changes, same session/cookie behaviour.
 - **A note on `package-lock.json`:** generating a genuine lockfile requires contacting the npm registry to resolve exact versions and integrity hashes, which isn't possible from where this project was assembled. Rather than hand-write a lockfile with fabricated hashes (which would fail or mislead more than help), the recommended one-time step is: after downloading this project, run `npm install` once inside the `server/` folder on any machine with Node 24 and internet access, then commit the `package-lock.json` it generates. From that point on, every Render deploy (and every teammate's machine) installs the exact same dependency versions. Render's build command (`npm install`) will also generate one automatically on first deploy if none is committed — committing it yourself just makes that pinning explicit and reviewable in your repository.
 
-## 9. Architecture — unchanged
+## 10. Architecture — unchanged
 
 - Dropbox: read-only, unchanged.
 - SQLite app database: fully editable, unchanged.
@@ -155,7 +173,8 @@ Render builds and starts the app automatically after you click Create/Apply. Wat
 
 | Area | Editable? | Stored in |
 |---|---|---|
-| Pinterest / IG Spam / Personal queues — captions, statuses, swapped photos | Yes | Database + uploaded photos, both under `DATA_DIR` |
+| Pinterest / IG Spam / Personal queues — captions, statuses, local uploads | Yes | Database + uploaded photos, both under `DATA_DIR` |
+| Pinterest / IG Spam queue media selected from Dropbox | Yes (selection/reference only; Dropbox file itself stays read-only) | Dropbox file ID in the HQ database |
 | Video ideas | Yes | Database |
 | Influencer database | Yes | Database |
 | Activity log | Yes (auto-logged) | Database |
