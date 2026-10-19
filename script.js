@@ -270,7 +270,7 @@ function renderQueue(key) {
     });
 
     // swap photo — uploaded to the server so it persists across reloads/devices
-    card.querySelector('[data-role="swap"]').addEventListener("change", async e => {
+    card.querySelector('[data-role="swap"]')?.addEventListener("change", async e => {
       const file = e.target.files[0];
       if (!file) return;
       try {
