@@ -379,6 +379,7 @@ wireFolderUpload("#upload-personal", "personal", "#count-personal");
    link later when publishing through Zapier.
 --------------------------------------------------------------------- */
 let dropboxPickerTarget = null;
+let dropboxPickerFilters = { search: "", folder: "", type: "all" };
 
 function ensureDropboxPicker() {
   let backdrop = qs("#dropbox-picker-backdrop");
@@ -392,12 +393,24 @@ function ensureDropboxPicker() {
       <div class="dropbox-picker-heading">
         <div>
           <h3 id="dropbox-picker-title">Choose from Dropbox</h3>
-          <p class="subtext">Select an image from /AVERE CONTENT/AF LIBRARY. Your Dropbox file stays untouched.</p>
+          <p class="subtext">Browse media from /AVERE CONTENT. Dropbox stays read-only.</p>
         </div>
         <button class="btn-ghost" type="button" data-role="close-picker">Close</button>
       </div>
-      <input class="dropbox-picker-search" type="search" placeholder="Search file names…" data-role="picker-search" />
+      <div class="dropbox-picker-controls">
+        <input class="dropbox-picker-search" type="search" placeholder="Search file or folder names…" data-role="picker-search" />
+        <select class="dropbox-picker-select" data-role="picker-folder" aria-label="Filter Dropbox folder">
+          <option value="">All folders</option>
+        </select>
+        <select class="dropbox-picker-select" data-role="picker-type" aria-label="Filter media type">
+          <option value="all">All media</option>
+          <option value="image">Images</option>
+          <option value="video">Videos</option>
+        </select>
+      </div>
+      <div class="dropbox-picker-summary" data-role="picker-summary"></div>
       <div class="dropbox-picker-grid" data-role="picker-grid"></div>
+      <p class="dropbox-picker-note">Videos are available to browse and preview. Pinterest and IG photo queue selection remains image-only until video/Reels publishing is enabled.</p>
     </div>
   `;
   document.body.appendChild(backdrop);
@@ -407,7 +420,16 @@ function ensureDropboxPicker() {
     if (e.target === backdrop) closeDropboxPicker();
   });
   backdrop.querySelector('[data-role="picker-search"]').addEventListener("input", e => {
-    renderDropboxPickerAssets(e.target.value);
+    dropboxPickerFilters.search = e.target.value;
+    renderDropboxPickerAssets();
+  });
+  backdrop.querySelector('[data-role="picker-folder"]').addEventListener("change", e => {
+    dropboxPickerFilters.folder = e.target.value;
+    renderDropboxPickerAssets();
+  });
+  backdrop.querySelector('[data-role="picker-type"]').addEventListener("change", e => {
+    dropboxPickerFilters.type = e.target.value;
+    renderDropboxPickerAssets();
   });
   return backdrop;
 }
@@ -418,27 +440,72 @@ function closeDropboxPicker() {
   dropboxPickerTarget = null;
 }
 
-function renderDropboxPickerAssets(searchText = "") {
+function populateDropboxPickerFolders() {
+  const backdrop = ensureDropboxPicker();
+  const select = backdrop.querySelector('[data-role="picker-folder"]');
+  const folders = [...new Set(
+    state.dropboxLibrary
+      .filter(file => file.isImage || file.isVideo)
+      .map(file => file.relativeFolder || "Root")
+  )].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
+  const current = dropboxPickerFilters.folder;
+  select.innerHTML = `<option value="">All folders</option>` + folders.map(folder =>
+    `<option value="${escapeHtml(folder)}">${escapeHtml(folder)}</option>`
+  ).join("");
+  if (folders.includes(current)) select.value = current;
+  else dropboxPickerFilters.folder = "";
+}
+
+function renderDropboxPickerAssets() {
   const backdrop = ensureDropboxPicker();
   const grid = backdrop.querySelector('[data-role="picker-grid"]');
-  const query = String(searchText || "").trim().toLowerCase();
-  const files = state.dropboxLibrary.filter(file =>
-    file.isImage && (!query || String(file.name || "").toLowerCase().includes(query))
-  );
+  const summary = backdrop.querySelector('[data-role="picker-summary"]');
+  const query = String(dropboxPickerFilters.search || "").trim().toLowerCase();
+
+  const files = state.dropboxLibrary.filter(file => {
+    if (!file.isImage && !file.isVideo) return false;
+    const haystack = `${file.name || ""} ${file.relativeFolder || ""} ${file.path || ""}`.toLowerCase();
+    const matchesSearch = !query || haystack.includes(query);
+    const matchesFolder = !dropboxPickerFilters.folder || (file.relativeFolder || "Root") === dropboxPickerFilters.folder;
+    const matchesType = dropboxPickerFilters.type === "all"
+      || (dropboxPickerFilters.type === "image" && file.isImage)
+      || (dropboxPickerFilters.type === "video" && file.isVideo);
+    return matchesSearch && matchesFolder && matchesType;
+  });
+
+  const imageCount = files.filter(file => file.isImage).length;
+  const videoCount = files.filter(file => file.isVideo).length;
+  summary.textContent = `${files.length} item${files.length === 1 ? "" : "s"} · ${imageCount} image${imageCount === 1 ? "" : "s"} · ${videoCount} video${videoCount === 1 ? "" : "s"}`;
 
   if (!files.length) {
-    grid.innerHTML = `<p class="empty-note">No matching images found in the Dropbox Content Library.</p>`;
+    grid.innerHTML = `<p class="empty-note">No matching media found in /AVERE CONTENT.</p>`;
     return;
   }
 
-  grid.innerHTML = files.map(file => `
-    <button class="dropbox-picker-item" type="button" data-file-id="${escapeHtml(file.id)}">
-      ${file.thumbnailUrl
-        ? `<img src="${escapeHtml(file.thumbnailUrl)}" alt="${escapeHtml(file.name)}" />`
-        : `<div class="dropbox-picker-placeholder">${escapeHtml(file.ext || "IMG")}</div>`}
-      <span title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
-    </button>
-  `).join("");
+  grid.innerHTML = files.map(file => {
+    const folder = file.relativeFolder || "Root";
+    if (file.isVideo) {
+      return `
+        <a class="dropbox-picker-item dropbox-picker-video" href="${escapeHtml(file.openUrl || "#")}" target="_blank" rel="noopener" title="Preview ${escapeHtml(file.name)}">
+          <div class="dropbox-picker-placeholder"><span class="dropbox-video-icon">▶</span><strong>${escapeHtml(file.ext || "VIDEO")}</strong></div>
+          <span class="dropbox-picker-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
+          <span class="dropbox-picker-folder" title="${escapeHtml(folder)}">${escapeHtml(folder)}</span>
+          <span class="dropbox-picker-action">Preview video ↗</span>
+        </a>
+      `;
+    }
+    return `
+      <button class="dropbox-picker-item" type="button" data-file-id="${escapeHtml(file.id)}">
+        ${file.thumbnailUrl
+          ? `<img src="${escapeHtml(file.thumbnailUrl)}" alt="${escapeHtml(file.name)}" />`
+          : `<div class="dropbox-picker-placeholder">${escapeHtml(file.ext || "IMG")}</div>`}
+        <span class="dropbox-picker-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
+        <span class="dropbox-picker-folder" title="${escapeHtml(folder)}">${escapeHtml(folder)}</span>
+        <span class="dropbox-picker-action">Use image</span>
+      </button>
+    `;
+  }).join("");
 
   grid.querySelectorAll("[data-file-id]").forEach(button => {
     button.addEventListener("click", async () => {
@@ -467,14 +534,18 @@ async function openDropboxPicker(queueKey, itemId) {
   const backdrop = ensureDropboxPicker();
   const queueName = queueKey === "pinterest" ? "Pinterest" : "IG Spam";
   const item = state.queues[queueKey].find(entry => String(entry.id) === String(itemId));
-  backdrop.querySelector("#dropbox-picker-title").textContent = `Choose Dropbox image — ${queueName}${item?.name ? ` · ${item.name}` : ""}`;
+  backdrop.querySelector("#dropbox-picker-title").textContent = `Choose Dropbox media — ${queueName}${item?.name ? ` · ${item.name}` : ""}`;
+  dropboxPickerFilters = { search: "", folder: "", type: "all" };
   backdrop.querySelector('[data-role="picker-search"]').value = "";
+  backdrop.querySelector('[data-role="picker-type"]').value = "all";
   backdrop.querySelector('[data-role="picker-grid"]').innerHTML = `<p class="empty-note">Refreshing Dropbox library…</p>`;
   dropboxPickerTarget = { queueKey, itemId };
   backdrop.classList.add("active");
 
   await refreshDropboxLibrary({ silent: true });
   if (!dropboxPickerTarget) return;
+  populateDropboxPickerFolders();
+  backdrop.querySelector('[data-role="picker-folder"]').value = "";
   renderDropboxPickerAssets();
 }
 
@@ -487,7 +558,7 @@ function renderDropboxLibrary() {
   if (!tbody) return;
 
   if (!state.dropboxLibrary.length) {
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-note">No files found yet — click Refresh.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-note">No files found yet — click Refresh.</td></tr>`;
   } else {
     tbody.innerHTML = state.dropboxLibrary.map(file => {
       const safeName = escapeHtml(file.name);
@@ -506,6 +577,7 @@ function renderDropboxLibrary() {
         <tr>
           <td>${thumb}</td>
           <td>${safeName}${newBadge}</td>
+          <td>${escapeHtml(file.relativeFolder || "Root")}</td>
           <td><span class="pill">${safeExt}</span></td>
           <td>${escapeHtml(modified)}</td>
           <td>${openLink}</td>

@@ -12,7 +12,7 @@ services:
       - key: DATA_DIR
         value: /var/data
       - key: DROPBOX_CONTENT_FOLDER
-        value: /AVERE CONTENT/AF LIBRARY
+        value: /AVERE CONTENT
       - key: DROPBOX_APP_KEY
         sync: false
       - key: DROPBOX_APP_SECRET

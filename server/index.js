@@ -49,7 +49,7 @@ const SESSIONS_DB_PATH = path.join(DATA_DIR, "sessions.db");
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
-const CONTENT_FOLDER = process.env.DROPBOX_CONTENT_FOLDER || "/AVERE CONTENT/AF LIBRARY";
+const CONTENT_FOLDER = process.env.DROPBOX_CONTENT_FOLDER || "/AVERE CONTENT";
 const ZAPIER_PINTEREST_WEBHOOK_URL = process.env.ZAPIER_PINTEREST_WEBHOOK_URL || "";
 const ZAPIER_PINTEREST_CALLBACK_SECRET = process.env.ZAPIER_PINTEREST_CALLBACK_SECRET || "";
 const ZAPIER_INSTAGRAM_WEBHOOK_URL = process.env.ZAPIER_INSTAGRAM_WEBHOOK_URL || "";
@@ -543,7 +543,7 @@ function loadCatalog() {
   try {
     return JSON.parse(fs.readFileSync(DROPBOX_CATALOG_FILE, "utf8"));
   } catch {
-    return { cursor: null, files: {}, lastSyncedAt: null };
+    return { rootPath: CONTENT_FOLDER, cursor: null, files: {}, lastSyncedAt: null };
   }
 }
 function saveCatalog(catalog) {
@@ -554,12 +554,47 @@ function classify(name) {
   return { ext: ext.toUpperCase(), isImage: IMAGE_EXT.includes(ext), isVideo: VIDEO_EXT.includes(ext) };
 }
 
+function normaliseDropboxPath(value) {
+  const raw = String(value || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  return raw || "/";
+}
+
+function folderInfo(filePath) {
+  const root = normaliseDropboxPath(CONTENT_FOLDER);
+  const full = normaliseDropboxPath(filePath);
+  let relative = full;
+  if (full.toLowerCase().startsWith(`${root.toLowerCase()}/`)) {
+    relative = full.slice(root.length + 1);
+  } else {
+    relative = full.replace(/^\/+/, "");
+  }
+  const parts = relative.split("/").filter(Boolean);
+  parts.pop(); // filename
+  const relativeFolder = parts.length ? parts.join("/") : "Root";
+  return {
+    relativeFolder,
+    topFolder: parts.length ? parts[0] : "Root",
+  };
+}
+
 // Pulls everything that changed since the last stored cursor and folds it
 // into the persisted catalog, keyed by Dropbox's own file ID. Keying by ID
 // is what prevents duplicates on repeated refreshes and lets us tell which
 // files are genuinely new since the previous sync.
 async function syncCatalog() {
-  const catalog = loadCatalog();
+  let catalog = loadCatalog();
+  const currentRoot = normaliseDropboxPath(CONTENT_FOLDER);
+  const catalogRoot = normaliseDropboxPath(catalog.rootPath || "");
+
+  // Dropbox cursors are tied to the original list_folder root. If the HQ
+  // content root changes (for example from /AVERE CONTENT/AF LIBRARY to
+  // /AVERE CONTENT), discard the old cursor/catalog and do one clean scan.
+  if (catalogRoot.toLowerCase() !== currentRoot.toLowerCase()) {
+    catalog = { rootPath: currentRoot, cursor: null, files: {}, lastSyncedAt: null };
+  } else {
+    catalog.rootPath = currentRoot;
+  }
+
   const knownIdsBefore = new Set(Object.keys(catalog.files));
 
   let cursor = catalog.cursor;
@@ -610,11 +645,17 @@ app.get("/api/dropbox-content", async (req, res) => {
       .sort((a, b) => new Date(b.modified) - new Date(a.modified))
       .map(f => ({
         ...f,
+        ...folderInfo(f.path),
         isNew: newIds.includes(f.id),
         thumbnailUrl: f.isImage ? `/api/dropbox-thumbnail?id=${encodeURIComponent(f.id)}` : null,
         openUrl: `/api/dropbox-open?id=${encodeURIComponent(f.id)}`,
       }));
-    res.json({ files, lastSyncedAt: catalog.lastSyncedAt, newCount: newIds.length });
+    res.json({
+      files,
+      contentRoot: CONTENT_FOLDER,
+      lastSyncedAt: catalog.lastSyncedAt,
+      newCount: newIds.length,
+    });
   } catch (err) {
     console.error(err);
     res.status(502).json({ error: "Could not reach Dropbox. Check server credentials and try again." });

@@ -65,11 +65,11 @@ A single-user login screen (`login.html`) sits in front of the entire dashboard.
 
 ## 4. Dropbox stays read-only
 
-The server only ever calls Dropbox's `list_folder`, `get_thumbnail_v2`, and `get_temporary_link` — all read-only. There is no code path anywhere that renames, moves, uploads, edits, or deletes a Dropbox file. Credentials (`DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN`, `DROPBOX_CONTENT_FOLDER`) live only in server environment variables — never in `index.html`, `script.js`, browser storage, or a URL, and never committed to the project. The Content Library now describes itself in the dashboard as the live view of `/AVERE CONTENT/AF LIBRARY`, not a one-off test import.
+The server only ever calls Dropbox's `list_folder`, `get_thumbnail_v2`, and `get_temporary_link` — all read-only. There is no code path anywhere that renames, moves, uploads, edits, or deletes a Dropbox file. Credentials (`DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN`, `DROPBOX_CONTENT_FOLDER`) live only in server environment variables — never in `index.html`, `script.js`, browser storage, or a URL, and never committed to the project. The Content Library now describes itself in the dashboard as the live view of `/AVERE CONTENT`, not a one-off test import.
 
 ## 5. Choose queue media directly from Dropbox
 
-Pinterest and IG Spam queue slots now include a **Choose from Dropbox** button. Clicking it opens a searchable picker backed by the live `/AVERE CONTENT/AF LIBRARY` catalogue. Selecting an image:
+Pinterest and IG Spam queue slots include a **Choose from Dropbox** button. The picker now browses the whole live `/AVERE CONTENT` tree recursively, with search plus folder and media-type filters. Images can be selected into the existing photo queues; videos are visible and previewable but are intentionally not selectable until the Reels/video publishing flow is enabled. Selecting an image:
 
 - does **not** copy, move, rename, upload, edit, or delete anything in Dropbox;
 - stores only the Dropbox file ID in the HQ database;
@@ -83,7 +83,7 @@ This means the normal content workflow is now:
 
 `Dropbox Content Library → Choose from Dropbox → Pinterest / IG Spam queue → Publish → Zapier → social platform`
 
-Dropbox remains strictly read-only throughout. No new environment variables are required for this feature.
+Dropbox remains strictly read-only throughout. No new credentials are required. `DROPBOX_CONTENT_FOLDER` should now be `/AVERE CONTENT`; on the first refresh after changing that root, the server automatically resets the old Dropbox cursor/catalogue and performs a clean recursive scan so every subfolder is discovered.
 
 ## 6. Upload hardening
 
@@ -97,7 +97,7 @@ Anywhere the dashboard displays a value someone typed or that came from Dropbox 
 
 - The sidebar footer no longer says data is "stored privately in this browser" — it now correctly says editable HQ data is stored securely on the server, and Dropbox media stays read-only.
 - The Danger Zone description no longer says data is stored "in this browser" — it now says it wipes queues, ideas, and influencer records stored on the server.
-- The Dropbox Content Library section no longer describes itself as a "first test" importing 5 files — it now describes itself as the live view of `/AVERE CONTENT/AF LIBRARY`, refreshed on demand.
+- The Dropbox Content Library section no longer describes itself as a "first test" importing 5 files — it now describes itself as the live view of `/AVERE CONTENT`, refreshed on demand.
 
 ## 9. Dependency and Node version pinning
 
@@ -149,7 +149,7 @@ Anywhere the dashboard displays a value someone typed or that came from Dropbox 
    - `HQ_USERNAME`, `HQ_PASSWORD` — pick your own login credentials for the dashboard.
    - `SESSION_SECRET` — any long random string (e.g. mash your keyboard for 40 characters).
    - `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN` — your Dropbox app credentials.
-   - `DROPBOX_CONTENT_FOLDER` — `/AVERE CONTENT/AF LIBRARY` (or wherever your content lives).
+   - `DROPBOX_CONTENT_FOLDER` — `/AVERE CONTENT` (or wherever your content lives).
    - `DATA_DIR` — `/var/data`
    - `NODE_ENV` — `production`
 7. Attach the persistent disk: under **Disks**, click **Add Disk**. Name it anything, set **Mount Path** to `/var/data`, size 1 GB is plenty to start.
