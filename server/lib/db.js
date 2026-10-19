@@ -217,7 +217,12 @@ function updateQueueItem(queue, id, fields) {
     instagram_permalink: fields.instagram_permalink ?? fields.instagramPermalink ?? current.instagram_permalink ?? "",
     published_at: fields.published_at ?? fields.publishedAt ?? current.published_at ?? "",
     assigned_date: fields.assigned_date ?? fields.assignedDate ?? current.assigned_date ?? "",
-    auto_selected: fields.auto_selected ?? fields.autoSelected ?? current.auto_selected ?? 0,
+    // better-sqlite3 does not accept JavaScript booleans as bound values.
+    // Auto-fill passes `autoSelected: true`, so normalise it to SQLite 0/1 here.
+    auto_selected: (() => {
+      const value = fields.auto_selected ?? fields.autoSelected ?? current.auto_selected ?? 0;
+      return value === true || value === 1 || value === "1" ? 1 : 0;
+    })(),
   };
   db.prepare(`
     UPDATE queue_items SET title = @title, caption = @caption, destination_url = @destination_url, status = @status, name = @name, image_url = @image_url, dropbox_file_id = @dropbox_file_id, pinterest_pin_id = @pinterest_pin_id, pinterest_pin_url = @pinterest_pin_url, instagram_media_id = @instagram_media_id, instagram_permalink = @instagram_permalink, published_at = @published_at, assigned_date = @assigned_date, auto_selected = @auto_selected, updated_at = @updated_at
