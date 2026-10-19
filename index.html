@@ -85,18 +85,24 @@
 
     <!-- ---------- PINTEREST QUEUE ---------- -->
     <section id="view-pinterest" class="view">
-      <div class="view-header">
-        <h3>Pinterest Queue — Brand Account</h3>
-        <p class="subtext">3 photos are pulled daily from your <strong>Pinterest folder</strong> (set it up in Settings). Edit captions, swap any photo out, and confirm the three posting slots for today.</p>
+      <div class="view-header queue-view-header">
+        <div>
+          <h3>Pinterest Queue — Brand Account</h3>
+          <p class="subtext">Dropbox can prepare your daily image suggestions automatically. Nothing publishes until you review a slot and press Publish Pin.</p>
+        </div>
+        <button class="btn-secondary" id="autofill-pinterest-now">🎲 Auto-fill today</button>
       </div>
       <div class="card-grid" id="pinterest-cards"></div>
     </section>
 
     <!-- ---------- IG SPAM QUEUE ---------- -->
     <section id="view-spam" class="view">
-      <div class="view-header">
-        <h3>IG Spam Account Queue</h3>
-        <p class="subtext">A separate rotation of 3 photos a day from your <strong>Spam folder</strong> — completely independent from the Pinterest folder.</p>
+      <div class="view-header queue-view-header">
+        <div>
+          <h3>IG Spam Account Queue</h3>
+          <p class="subtext">A separate daily Dropbox rotation for the archive account. Suggestions wait for your approval before anything is sent to Instagram.</p>
+        </div>
+        <button class="btn-secondary" id="autofill-spam-now">🎲 Auto-fill today</button>
       </div>
       <div class="card-grid" id="spam-cards"></div>
     </section>
@@ -206,6 +212,48 @@
     <section id="view-settings" class="view">
       <div class="view-header">
         <h3>Settings &amp; Connections</h3>
+      </div>
+
+      <div class="panel">
+        <h3>Daily Dropbox Auto-fill</h3>
+        <p class="subtext">Let the HQ prepare each day's queue from Dropbox, then wait for your approval. Auto-fill never posts anything and never modifies Dropbox.</p>
+        <div class="autofill-grid">
+          <div class="autofill-card" data-autofill-card="pinterest">
+            <div class="autofill-card-head">
+              <div><strong>Pinterest</strong><span class="autofill-last-run" id="autofill-pinterest-last">Not run yet</span></div>
+              <label class="toggle-line"><input type="checkbox" id="autofill-pinterest-enabled" /> Enabled</label>
+            </div>
+            <div class="autofill-fields">
+              <label>Slots per day<input type="number" min="1" max="3" id="autofill-pinterest-slots" value="3" /></label>
+              <label>Fill time<input type="time" id="autofill-pinterest-time" value="07:00" /></label>
+              <label>No-repeat window<input type="number" min="0" max="3650" id="autofill-pinterest-days" value="60" /><span>days</span></label>
+            </div>
+            <label class="autofill-folder-label">Source folders
+              <select multiple id="autofill-pinterest-folders" class="autofill-folder-select"></select>
+              <small>Leave all folders unselected to use all image folders under /AVERE CONTENT.</small>
+            </label>
+          </div>
+
+          <div class="autofill-card" data-autofill-card="spam">
+            <div class="autofill-card-head">
+              <div><strong>IG Spam</strong><span class="autofill-last-run" id="autofill-spam-last">Not run yet</span></div>
+              <label class="toggle-line"><input type="checkbox" id="autofill-spam-enabled" /> Enabled</label>
+            </div>
+            <div class="autofill-fields">
+              <label>Slots per day<input type="number" min="1" max="3" id="autofill-spam-slots" value="3" /></label>
+              <label>Fill time<input type="time" id="autofill-spam-time" value="07:00" /></label>
+              <label>No-repeat window<input type="number" min="0" max="3650" id="autofill-spam-days" value="30" /><span>days</span></label>
+            </div>
+            <label class="autofill-folder-label">Source folders
+              <select multiple id="autofill-spam-folders" class="autofill-folder-select"></select>
+              <small>Leave all folders unselected to use all image folders under /AVERE CONTENT.</small>
+            </label>
+          </div>
+        </div>
+        <div class="autofill-actions">
+          <button class="btn-primary" id="save-autofill-settings">Save auto-fill settings</button>
+          <span class="subtext">Daily scheduling uses Europe/London time.</span>
+        </div>
       </div>
 
       <div class="panel">

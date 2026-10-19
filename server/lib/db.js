@@ -38,6 +38,8 @@ db.exec(`
     instagram_media_id TEXT DEFAULT '',
     instagram_permalink TEXT DEFAULT '',
     published_at TEXT DEFAULT '',
+    assigned_date TEXT DEFAULT '',
+    auto_selected INTEGER DEFAULT 0,
     position INTEGER DEFAULT 0,
     updated_at TEXT NOT NULL
   );
@@ -61,6 +63,25 @@ db.exec(`
     created_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS content_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dropbox_file_id TEXT NOT NULL,
+    queue TEXT NOT NULL,
+    queue_item_id TEXT DEFAULT '',
+    auto_selected INTEGER DEFAULT 0,
+    selected_at TEXT NOT NULL,
+    posted_at TEXT DEFAULT ''
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_content_usage_file ON content_usage(dropbox_file_id);
+  CREATE INDEX IF NOT EXISTS idx_content_usage_queue_selected ON content_usage(queue, selected_at);
+
   CREATE TABLE IF NOT EXISTS activity_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     text TEXT NOT NULL,
@@ -83,6 +104,8 @@ ensureColumn('queue_items', 'instagram_media_id', "TEXT DEFAULT ''");
 ensureColumn('queue_items', 'instagram_permalink', "TEXT DEFAULT ''");
 ensureColumn('queue_items', 'published_at', "TEXT DEFAULT ''");
 ensureColumn('queue_items', 'dropbox_file_id', "TEXT DEFAULT ''");
+ensureColumn('queue_items', 'assigned_date', "TEXT DEFAULT ''");
+ensureColumn('queue_items', 'auto_selected', "INTEGER DEFAULT 0");
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -158,6 +181,8 @@ function getFullState() {
         pinterestPinId: row.pinterest_pin_id || "", pinterestPinUrl: row.pinterest_pin_url || "",
         instagramMediaId: row.instagram_media_id || "", instagramPermalink: row.instagram_permalink || "",
         publishedAt: row.published_at || "",
+        assignedDate: row.assigned_date || "",
+        autoSelected: Boolean(row.auto_selected),
       });
     }
   }
@@ -191,12 +216,14 @@ function updateQueueItem(queue, id, fields) {
     instagram_media_id: fields.instagram_media_id ?? fields.instagramMediaId ?? current.instagram_media_id ?? "",
     instagram_permalink: fields.instagram_permalink ?? fields.instagramPermalink ?? current.instagram_permalink ?? "",
     published_at: fields.published_at ?? fields.publishedAt ?? current.published_at ?? "",
+    assigned_date: fields.assigned_date ?? fields.assignedDate ?? current.assigned_date ?? "",
+    auto_selected: fields.auto_selected ?? fields.autoSelected ?? current.auto_selected ?? 0,
   };
   db.prepare(`
-    UPDATE queue_items SET title = @title, caption = @caption, destination_url = @destination_url, status = @status, name = @name, image_url = @image_url, dropbox_file_id = @dropbox_file_id, pinterest_pin_id = @pinterest_pin_id, pinterest_pin_url = @pinterest_pin_url, instagram_media_id = @instagram_media_id, instagram_permalink = @instagram_permalink, published_at = @published_at, updated_at = @updated_at
+    UPDATE queue_items SET title = @title, caption = @caption, destination_url = @destination_url, status = @status, name = @name, image_url = @image_url, dropbox_file_id = @dropbox_file_id, pinterest_pin_id = @pinterest_pin_id, pinterest_pin_url = @pinterest_pin_url, instagram_media_id = @instagram_media_id, instagram_permalink = @instagram_permalink, published_at = @published_at, assigned_date = @assigned_date, auto_selected = @auto_selected, updated_at = @updated_at
     WHERE id = @id
   `).run({ ...next, updated_at: nowIso(), id });
-  return { id, queue, title: next.title, caption: next.caption, destinationUrl: next.destination_url, status: next.status, name: next.name, image_url: next.image_url, url: next.image_url, dropboxFileId: next.dropbox_file_id, pinterestPinId: next.pinterest_pin_id, pinterestPinUrl: next.pinterest_pin_url, instagramMediaId: next.instagram_media_id, instagramPermalink: next.instagram_permalink, publishedAt: next.published_at };
+  return { id, queue, title: next.title, caption: next.caption, destinationUrl: next.destination_url, status: next.status, name: next.name, image_url: next.image_url, url: next.image_url, dropboxFileId: next.dropbox_file_id, pinterestPinId: next.pinterest_pin_id, pinterestPinUrl: next.pinterest_pin_url, instagramMediaId: next.instagram_media_id, instagramPermalink: next.instagram_permalink, publishedAt: next.published_at, assignedDate: next.assigned_date, autoSelected: Boolean(next.auto_selected) };
 }
 
 function getQueueItem(queue, id) {
@@ -210,7 +237,95 @@ function getQueueItem(queue, id) {
     pinterestPinId: row.pinterest_pin_id || "", pinterestPinUrl: row.pinterest_pin_url || "",
     instagramMediaId: row.instagram_media_id || "", instagramPermalink: row.instagram_permalink || "",
     publishedAt: row.published_at || "",
+    assignedDate: row.assigned_date || "",
+    autoSelected: Boolean(row.auto_selected),
   };
+}
+
+function getQueueItems(queue) {
+  return db.prepare(`SELECT * FROM queue_items WHERE queue = ? ORDER BY position, updated_at`).all(queue)
+    .map(row => ({
+      id: row.id, queue: row.queue, name: row.name, title: row.title || "",
+      caption: row.caption || "", destinationUrl: row.destination_url || "",
+      status: row.status, url: row.image_url, image_url: row.image_url,
+      dropboxFileId: row.dropbox_file_id || "",
+      pinterestPinId: row.pinterest_pin_id || "", pinterestPinUrl: row.pinterest_pin_url || "",
+      instagramMediaId: row.instagram_media_id || "", instagramPermalink: row.instagram_permalink || "",
+      publishedAt: row.published_at || "", assignedDate: row.assigned_date || "",
+      autoSelected: Boolean(row.auto_selected), position: row.position,
+    }));
+}
+
+const AUTO_FILL_DEFAULTS = {
+  pinterest: { enabled: false, slots: 3, sourceFolders: [], mediaType: "image", noRepeatDays: 60, fillTime: "07:00", lastRunDate: "" },
+  spam: { enabled: false, slots: 3, sourceFolders: [], mediaType: "image", noRepeatDays: 30, fillTime: "07:00", lastRunDate: "" },
+};
+
+function getSetting(key, fallback = null) {
+  const row = db.prepare(`SELECT value FROM app_settings WHERE key = ?`).get(key);
+  if (!row) return fallback;
+  try { return JSON.parse(row.value); } catch { return fallback; }
+}
+function setSetting(key, value) {
+  db.prepare(`INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`)
+    .run(key, JSON.stringify(value), nowIso());
+  return value;
+}
+function normaliseAutoFillConfig(queue, value) {
+  const defaults = AUTO_FILL_DEFAULTS[queue] || AUTO_FILL_DEFAULTS.pinterest;
+  const raw = value && typeof value === "object" ? value : {};
+  const slots = Math.max(1, Math.min(3, Number(raw.slots ?? defaults.slots) || defaults.slots));
+  const days = Math.max(0, Math.min(3650, Number(raw.noRepeatDays ?? defaults.noRepeatDays) || 0));
+  const time = /^\d{2}:\d{2}$/.test(String(raw.fillTime || "")) ? String(raw.fillTime) : defaults.fillTime;
+  const sourceFolders = Array.isArray(raw.sourceFolders) ? [...new Set(raw.sourceFolders.map(v => String(v).trim()).filter(Boolean))].slice(0, 100) : [];
+  return { enabled: Boolean(raw.enabled), slots, sourceFolders, mediaType: "image", noRepeatDays: days, fillTime: time, lastRunDate: String(raw.lastRunDate || "") };
+}
+function getAutoFillSettings() {
+  const saved = getSetting("auto_fill", {});
+  return { pinterest: normaliseAutoFillConfig("pinterest", saved?.pinterest), spam: normaliseAutoFillConfig("spam", saved?.spam) };
+}
+function saveAutoFillSettings(settings) {
+  const existing = getAutoFillSettings();
+  const merged = {
+    pinterest: normaliseAutoFillConfig("pinterest", { ...existing.pinterest, ...(settings?.pinterest || {}) }),
+    spam: normaliseAutoFillConfig("spam", { ...existing.spam, ...(settings?.spam || {}) }),
+  };
+  setSetting("auto_fill", merged);
+  return merged;
+}
+function setAutoFillLastRun(queue, date) {
+  const current = getAutoFillSettings();
+  if (!current[queue]) return current;
+  current[queue].lastRunDate = String(date || "");
+  setSetting("auto_fill", current);
+  return current[queue];
+}
+function recordContentSelection(fileId, queue, queueItemId, autoSelected = false) {
+  if (!fileId) return;
+  db.prepare(`INSERT INTO content_usage (dropbox_file_id, queue, queue_item_id, auto_selected, selected_at, posted_at) VALUES (?, ?, ?, ?, ?, '')`)
+    .run(String(fileId), String(queue), String(queueItemId || ""), autoSelected ? 1 : 0, nowIso());
+}
+function markContentPosted(fileId, queue, queueItemId) {
+  if (!fileId) return;
+  const row = db.prepare(`SELECT id FROM content_usage WHERE dropbox_file_id = ? AND queue = ? AND queue_item_id = ? ORDER BY id DESC LIMIT 1`)
+    .get(String(fileId), String(queue), String(queueItemId || ""));
+  if (row) db.prepare(`UPDATE content_usage SET posted_at = ? WHERE id = ?`).run(nowIso(), row.id);
+  else db.prepare(`INSERT INTO content_usage (dropbox_file_id, queue, queue_item_id, auto_selected, selected_at, posted_at) VALUES (?, ?, ?, 0, ?, ?)`)
+    .run(String(fileId), String(queue), String(queueItemId || ""), nowIso(), nowIso());
+}
+function getRecentUsedFileIds(queue, days) {
+  const n = Math.max(0, Number(days) || 0);
+  if (!n) return new Set();
+  const cutoff = new Date(Date.now() - n * 86400000).toISOString();
+  return new Set(db.prepare(`SELECT DISTINCT dropbox_file_id FROM content_usage WHERE queue = ? AND (selected_at >= ? OR posted_at >= ?)`)
+    .all(queue, cutoff, cutoff).map(r => r.dropbox_file_id));
+}
+function getCurrentlyQueuedDropboxIds(excludeQueueItemId = "") {
+  return new Set(db.prepare(`SELECT dropbox_file_id FROM queue_items WHERE dropbox_file_id <> '' AND id <> ? AND status NOT IN ('failed')`)
+    .all(String(excludeQueueItemId || "")).map(r => r.dropbox_file_id));
+}
+function getContentUsageSummary() {
+  return db.prepare(`SELECT dropbox_file_id, queue, COUNT(*) AS times_used, MAX(selected_at) AS last_queued, MAX(CASE WHEN posted_at <> '' THEN posted_at ELSE NULL END) AS last_posted FROM content_usage GROUP BY dropbox_file_id, queue`).all();
 }
 
 // ---------- influencers ----------
@@ -282,14 +397,23 @@ function addActivity(text) {
 }
 
 function resetAll() {
-  db.exec(`DELETE FROM queue_items; DELETE FROM influencers; DELETE FROM ideas; DELETE FROM activity_log;`);
+  db.exec(`DELETE FROM queue_items; DELETE FROM influencers; DELETE FROM ideas; DELETE FROM activity_log; DELETE FROM content_usage;`);
   seedIfEmpty();
 }
 
 module.exports = {
   getFullState,
   getQueueItem,
+  getQueueItems,
   updateQueueItem,
+  getAutoFillSettings,
+  saveAutoFillSettings,
+  setAutoFillLastRun,
+  recordContentSelection,
+  markContentPosted,
+  getRecentUsedFileIds,
+  getCurrentlyQueuedDropboxIds,
+  getContentUsageSummary,
   createInfluencer,
   updateInfluencer,
   deleteInfluencer,

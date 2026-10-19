@@ -190,6 +190,7 @@ app.post("/api/publish/pinterest/callback", (req, res) => {
     pinterestPinUrl: pinUrl,
     publishedAt: new Date().toISOString(),
   });
+  if (item.dropboxFileId) store.markContentPosted(item.dropboxFileId, "pinterest", item.id);
   store.addActivity(`Pinterest confirmed live: ${(item.title || item.caption || item.name).slice(0, 80)}`);
   return res.json({ success: true, item: updated, pin_url: pinUrl });
 });
@@ -235,6 +236,7 @@ app.post("/api/publish/instagram/callback", (req, res) => {
     instagramPermalink: permalink,
     publishedAt: new Date().toISOString(),
   });
+  if (item.dropboxFileId) store.markContentPosted(item.dropboxFileId, "spam", item.id);
   store.addActivity(`Instagram confirmed live: ${(item.caption || item.name).slice(0, 80)}`);
   return res.json({ success: true, item: updated, permalink });
 });
@@ -322,6 +324,8 @@ app.post("/api/queues/:queue/:id/photo", upload.single("photo"), (req, res) => {
     dropboxFileId: "",
     name: req.file.originalname,
     status: "pending",
+    assignedDate: londonDate(),
+    autoSelected: false,
     ...(req.params.queue === "pinterest" ? { pinterestPinId: "", pinterestPinUrl: "", publishedAt: "" } : {}),
     ...(req.params.queue === "spam" ? { instagramMediaId: "", instagramPermalink: "", publishedAt: "" } : {}),
   });
@@ -366,10 +370,13 @@ app.post("/api/queues/:queue/:id/dropbox", async (req, res) => {
     dropboxFileId: file.id,
     name: file.name,
     status: "pending",
+    assignedDate: londonDate(),
+    autoSelected: false,
     ...(queue === "pinterest" ? { pinterestPinId: "", pinterestPinUrl: "", publishedAt: "" } : {}),
     ...(queue === "spam" ? { instagramMediaId: "", instagramPermalink: "", publishedAt: "" } : {}),
   });
 
+  store.recordContentSelection(file.id, queue, req.params.id, false);
   store.addActivity(`Selected Dropbox image for ${queue === "pinterest" ? "Pinterest" : "IG Spam"}: "${file.name.slice(0, 100)}"`);
   res.json(updated);
 });
@@ -577,6 +584,153 @@ function folderInfo(filePath) {
   };
 }
 
+
+/* =========================================================
+   DAILY DROPBOX AUTO-FILL
+   Chooses eligible Dropbox images for Pinterest / IG Spam queue
+   slots, but never publishes them. Every generated slot remains
+   awaiting approval until the user explicitly presses Publish.
+========================================================= */
+const AUTO_FILL_QUEUES = new Set(["pinterest", "spam"]);
+const LONDON_TZ = "Europe/London";
+
+function londonClockParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: LONDON_TZ,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(date).reduce((acc, part) => {
+    if (part.type !== "literal") acc[part.type] = part.value;
+    return acc;
+  }, {});
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}`,
+  };
+}
+function londonDate() { return londonClockParts().date; }
+
+function shuffle(items) {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(i + 1);
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+function fileMatchesFolders(file, folders) {
+  if (!Array.isArray(folders) || folders.length === 0) return true;
+  const info = folderInfo(file.path);
+  const relative = String(info.relativeFolder || "Root").toLowerCase();
+  const top = String(info.topFolder || "Root").toLowerCase();
+  return folders.some(value => {
+    const wanted = String(value || "").replace(/^\/+|\/+$/g, "").toLowerCase();
+    return wanted === "root" ? relative === "root"
+      : top === wanted || relative === wanted || relative.startsWith(`${wanted}/`);
+  });
+}
+
+function eligibleDropboxImages(catalog, queue, config, excludeItemId = "", extraExcluded = new Set()) {
+  const recent = store.getRecentUsedFileIds(queue, config.noRepeatDays);
+  const queued = store.getCurrentlyQueuedDropboxIds(excludeItemId);
+  const blocked = new Set([...recent, ...queued, ...extraExcluded]);
+  return Object.values(catalog.files || {}).filter(file =>
+    file.isImage && fileMatchesFolders(file, config.sourceFolders) && !blocked.has(file.id)
+  );
+}
+
+function assignAutoFile(queue, item, file, today) {
+  const previewUrl = `/api/dropbox-thumbnail?id=${encodeURIComponent(file.id)}`;
+  const resetFields = queue === "pinterest"
+    ? { pinterestPinId: "", pinterestPinUrl: "", publishedAt: "" }
+    : { instagramMediaId: "", instagramPermalink: "", publishedAt: "" };
+  const updated = store.updateQueueItem(queue, item.id, {
+    image_url: previewUrl,
+    dropboxFileId: file.id,
+    name: file.name,
+    title: "",
+    caption: "",
+    destinationUrl: "",
+    status: "awaiting_approval",
+    assignedDate: today,
+    autoSelected: true,
+    ...resetFields,
+  });
+  store.recordContentSelection(file.id, queue, item.id, true);
+  return updated;
+}
+
+async function runAutoFill(queue, { force = false, initiatedBy = "manual" } = {}) {
+  if (!AUTO_FILL_QUEUES.has(queue)) throw new Error("Auto-fill is only available for Pinterest and IG Spam.");
+  const allSettings = store.getAutoFillSettings();
+  const config = allSettings[queue];
+  const today = londonDate();
+  if (!force && config.lastRunDate === today) {
+    return { skipped: true, reason: "already_filled_today", queue, settings: config, items: store.getQueueItems(queue) };
+  }
+
+  const { catalog } = await syncCatalog();
+  const queueItems = store.getQueueItems(queue).slice(0, config.slots);
+  const protectedStatuses = new Set(["publishing", "submitted"]);
+  // Snapshot everything assigned before the run too, so replacing old slots
+  // cannot make yesterday's asset immediately eligible for a later slot.
+  const selectedThisRun = store.getCurrentlyQueuedDropboxIds("");
+  const assigned = [];
+  const skipped = [];
+
+  for (const item of queueItems) {
+    if (protectedStatuses.has(item.status)) {
+      skipped.push({ id: item.id, reason: item.status });
+      continue;
+    }
+    if (item.status === "posted" && item.assignedDate === today) {
+      skipped.push({ id: item.id, reason: "posted_today" });
+      continue;
+    }
+    if (!force && item.assignedDate === today && item.url) {
+      skipped.push({ id: item.id, reason: "already_filled_today" });
+      continue;
+    }
+
+    const extraExcluded = new Set(selectedThisRun);
+    if (item.dropboxFileId) extraExcluded.add(item.dropboxFileId);
+    const candidates = eligibleDropboxImages(catalog, queue, config, item.id, extraExcluded);
+    if (!candidates.length) {
+      skipped.push({ id: item.id, reason: "no_eligible_media" });
+      continue;
+    }
+    const file = shuffle(candidates)[0];
+    selectedThisRun.add(file.id);
+    assigned.push(assignAutoFile(queue, item, file, today));
+  }
+
+  // A manual run counts as today's fill too, preventing the scheduler from
+  // immediately replacing suggestions later the same day.
+  store.setAutoFillLastRun(queue, today);
+  const label = queue === "pinterest" ? "Pinterest" : "IG Spam";
+  store.addActivity(`${label} auto-fill ${initiatedBy === "schedule" ? "ran" : "generated"}: ${assigned.length} suggestion${assigned.length === 1 ? "" : "s"}`);
+  return { success: true, queue, date: today, assigned, skipped, settings: store.getAutoFillSettings()[queue], items: store.getQueueItems(queue) };
+}
+
+async function replaceAutoSuggestion(queue, itemId) {
+  if (!AUTO_FILL_QUEUES.has(queue)) throw new Error("Auto-fill replacement is only available for Pinterest and IG Spam.");
+  const item = store.getQueueItem(queue, itemId);
+  if (!item) throw new Error("Queue item not found.");
+  if (["publishing", "submitted", "posted"].includes(item.status)) throw new Error("This slot can no longer be replaced.");
+
+  const config = store.getAutoFillSettings()[queue];
+  const { catalog } = await syncCatalog();
+  const extra = new Set(item.dropboxFileId ? [item.dropboxFileId] : []);
+  let candidates = eligibleDropboxImages(catalog, queue, config, item.id, extra);
+  if (!candidates.length) throw new Error("No other eligible Dropbox images match this queue's current rules.");
+  const file = shuffle(candidates)[0];
+  const updated = assignAutoFile(queue, item, file, londonDate());
+  const label = queue === "pinterest" ? "Pinterest" : "IG Spam";
+  store.addActivity(`Replaced ${label} auto-fill suggestion: "${file.name.slice(0, 100)}"`);
+  return updated;
+}
+
 // Pulls everything that changed since the last stored cursor and folds it
 // into the persisted catalog, keyed by Dropbox's own file ID. Keying by ID
 // is what prevents duplicates on repeated refreshes and lets us tell which
@@ -635,6 +789,35 @@ async function syncCatalog() {
   const newIds = Object.keys(catalog.files).filter(id => !knownIdsBefore.has(id));
   return { catalog, newIds };
 }
+
+// Auto-fill settings and actions. These routes only assign Dropbox file
+// references to queue slots. They never publish and never write to Dropbox.
+app.get("/api/autofill/settings", (req, res) => {
+  res.json({ settings: store.getAutoFillSettings() });
+});
+
+app.put("/api/autofill/settings", (req, res) => {
+  res.json({ settings: store.saveAutoFillSettings(req.body || {}) });
+});
+
+app.post("/api/autofill/:queue/run", async (req, res) => {
+  try {
+    const result = await runAutoFill(req.params.queue, { force: true, initiatedBy: "manual" });
+    res.json(result);
+  } catch (err) {
+    console.error("Manual auto-fill failed:", err);
+    res.status(400).json({ error: err.message || "Could not auto-fill this queue." });
+  }
+});
+
+app.post("/api/autofill/:queue/:id/replace", async (req, res) => {
+  try {
+    res.json(await replaceAutoSuggestion(req.params.queue, req.params.id));
+  } catch (err) {
+    console.error("Auto-fill replacement failed:", err);
+    res.status(400).json({ error: err.message || "Could not replace this suggestion." });
+  }
+});
 
 // READ-ONLY: lists whatever is currently in the Dropbox content folder.
 // Never renames, moves, uploads, edits, or deletes anything in Dropbox.
@@ -704,6 +887,31 @@ app.use((err, req, res, next) => {
   }
   next();
 });
+
+// Lightweight daily scheduler. Render Starter stays running, so a minute-level
+// check is enough; lastRunDate in SQLite prevents duplicate fills after restarts.
+let autoFillTickRunning = false;
+async function autoFillSchedulerTick() {
+  if (autoFillTickRunning) return;
+  autoFillTickRunning = true;
+  try {
+    const clock = londonClockParts();
+    const settings = store.getAutoFillSettings();
+    for (const queue of ["pinterest", "spam"]) {
+      const cfg = settings[queue];
+      if (!cfg.enabled || cfg.lastRunDate === clock.date || clock.time < cfg.fillTime) continue;
+      try {
+        await runAutoFill(queue, { force: false, initiatedBy: "schedule" });
+      } catch (err) {
+        console.error(`Scheduled ${queue} auto-fill failed:`, err);
+      }
+    }
+  } finally {
+    autoFillTickRunning = false;
+  }
+}
+setTimeout(autoFillSchedulerTick, 10_000);
+setInterval(autoFillSchedulerTick, 60_000);
 
 // Bind explicitly to 0.0.0.0 so the app is reachable inside a container
 // (Render, Docker, etc.), not just on localhost.

@@ -84,7 +84,10 @@ async function apiSend(url, method, body) {
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (res.status === 401) { redirectToLogin(); throw new Error("Not authenticated"); }
-  if (!res.ok) throw new Error(`${method} ${url} -> ${res.status}`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `${method} ${url} -> ${res.status}`);
+  }
   if (res.status === 204) return null;
   return res.json();
 }
@@ -109,6 +112,10 @@ const state = {
   activity: [],
   dropboxLibrary: [],
   dropboxLastSync: "Not synced yet",
+  autoFillSettings: {
+    pinterest: { enabled: false, slots: 3, sourceFolders: [], noRepeatDays: 60, fillTime: "07:00", lastRunDate: "" },
+    spam: { enabled: false, slots: 3, sourceFolders: [], noRepeatDays: 30, fillTime: "07:00", lastRunDate: "" },
+  },
 };
 
 async function logActivity(text) {
@@ -182,13 +189,14 @@ function renderQueue(key) {
         <textarea placeholder="${key === "pinterest" ? "Pinterest description..." : "Write a caption..."}" data-role="caption">${escapeHtml(item.caption ?? "")}</textarea>
         ${key === "pinterest" ? `<input class="queue-text-input" type="url" placeholder="Destination link (optional)" data-role="destination-url" value="${escapeHtml(item.destinationUrl ?? "")}" />` : ""}
         <div class="post-card-meta">
-          <span>${safeName}${item.dropboxFileId ? ` <span class="source-badge">Dropbox</span>` : ""}</span>
-          <span class="status-pill status-${escapeHtml(item.status || "pending")}">${escapeHtml(item.status)}</span>
+          <span>${safeName}${item.dropboxFileId ? ` <span class="source-badge">Dropbox</span>` : ""}${item.autoSelected ? ` <span class="source-badge auto-badge">Auto-picked</span>` : ""}</span>
+          <span class="status-pill status-${escapeHtml(item.status || "pending")}">${escapeHtml(String(item.status || "pending").replace(/_/g, " "))}</span>
         </div>
         ${key === "pinterest" && item.pinterestPinUrl ? `<a class="view-pin-link" href="${escapeHtml(item.pinterestPinUrl)}" target="_blank" rel="noopener noreferrer">View Pin ↗</a>` : ""}
         ${key === "spam" && item.instagramPermalink ? `<a class="view-pin-link" href="${escapeHtml(item.instagramPermalink)}" target="_blank" rel="noopener noreferrer">View Post ↗</a>` : ""}
         <div class="card-actions">
           ${["pinterest", "spam"].includes(key) ? `<button class="btn-secondary" type="button" data-role="dropbox">Choose from Dropbox</button>` : ""}
+          ${["pinterest", "spam"].includes(key) && item.autoSelected && !["publishing","submitted","posted"].includes(item.status) ? `<button class="btn-ghost" type="button" data-role="replace-auto">↻ Replace suggestion</button>` : ""}
           <label class="btn-secondary" style="cursor:pointer;">
             Upload from Mac
             <input type="file" accept="image/*" data-role="swap" />
@@ -242,14 +250,28 @@ function renderQueue(key) {
       openDropboxPicker(key, item.id);
     });
 
+    card.querySelector('[data-role="replace-auto"]')?.addEventListener("click", async e => {
+      const button = e.currentTarget;
+      button.disabled = true;
+      try {
+        const updated = await apiSend(`/api/autofill/${key}/${encodeURIComponent(item.id)}/replace`, "POST", {});
+        Object.assign(item, updated);
+        renderQueue(key);
+        renderStats();
+        toast("Suggestion replaced", "success");
+      } catch (err) {
+        button.disabled = false;
+        toast(err.message || "Couldn't replace this suggestion", "error");
+      }
+    });
+
     // swap photo — uploaded to the server so it persists across reloads/devices
     card.querySelector('[data-role="swap"]').addEventListener("change", async e => {
       const file = e.target.files[0];
       if (!file) return;
       try {
         const updated = await apiUpload(`/api/queues/${key}/${item.id}/photo`, file, "photo");
-        item.url = updated.url;
-        item.name = updated.name;
+        Object.assign(item, updated);
         renderQueue(key);
         toast(`Photo swapped for ${cfg.platform}`, "success");
       } catch (err) {
@@ -599,6 +621,7 @@ async function refreshDropboxLibrary({ silent = false } = {}) {
       ? new Date(data.lastSyncedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
       : nowStr();
     renderDropboxLibrary();
+    renderAutoFillSettings();
     if (!silent) {
       const newsBit = data.newCount > 0 ? `, ${data.newCount} new` : "";
       logActivity(`Refreshed Dropbox content library (${data.files.length} files${newsBit})`);
@@ -611,6 +634,93 @@ async function refreshDropboxLibrary({ silent = false } = {}) {
 }
 
 qs("#refresh-dropbox-btn")?.addEventListener("click", () => refreshDropboxLibrary());
+
+/* ---------------------- DAILY DROPBOX AUTO-FILL ---------------------- */
+function autoFillFolderOptions() {
+  return [...new Set(
+    state.dropboxLibrary
+      .filter(file => file.isImage)
+      .map(file => file.topFolder || file.relativeFolder || "Root")
+  )].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
+function renderAutoFillSettings() {
+  const folders = autoFillFolderOptions();
+  ["pinterest", "spam"].forEach(queue => {
+    const cfg = state.autoFillSettings?.[queue];
+    if (!cfg) return;
+    const enabled = qs(`#autofill-${queue}-enabled`);
+    const slots = qs(`#autofill-${queue}-slots`);
+    const time = qs(`#autofill-${queue}-time`);
+    const days = qs(`#autofill-${queue}-days`);
+    const select = qs(`#autofill-${queue}-folders`);
+    const last = qs(`#autofill-${queue}-last`);
+    if (enabled) enabled.checked = Boolean(cfg.enabled);
+    if (slots) slots.value = cfg.slots || 3;
+    if (time) time.value = cfg.fillTime || "07:00";
+    if (days) days.value = cfg.noRepeatDays ?? (queue === "pinterest" ? 60 : 30);
+    if (last) last.textContent = cfg.lastRunDate ? `Last filled ${cfg.lastRunDate}` : "Not run yet";
+    if (select) {
+      const selected = new Set(cfg.sourceFolders || []);
+      const available = folders.length ? folders : [...selected];
+      select.innerHTML = available.map(folder => `<option value="${escapeHtml(folder)}" ${selected.has(folder) ? "selected" : ""}>${escapeHtml(folder)}</option>`).join("");
+    }
+  });
+}
+
+function collectAutoFillQueueSettings(queue) {
+  const select = qs(`#autofill-${queue}-folders`);
+  return {
+    enabled: Boolean(qs(`#autofill-${queue}-enabled`)?.checked),
+    slots: Number(qs(`#autofill-${queue}-slots`)?.value || 3),
+    fillTime: qs(`#autofill-${queue}-time`)?.value || "07:00",
+    noRepeatDays: Number(qs(`#autofill-${queue}-days`)?.value || 0),
+    sourceFolders: select && select.options.length
+      ? [...select.selectedOptions].map(option => option.value)
+      : [...(state.autoFillSettings?.[queue]?.sourceFolders || [])],
+  };
+}
+
+async function saveAutoFillSettings() {
+  const payload = {
+    pinterest: collectAutoFillQueueSettings("pinterest"),
+    spam: collectAutoFillQueueSettings("spam"),
+  };
+  const result = await apiSend("/api/autofill/settings", "PUT", payload);
+  state.autoFillSettings = result.settings;
+  renderAutoFillSettings();
+  toast("Auto-fill settings saved", "success");
+}
+
+async function autoFillToday(queue) {
+  const name = queue === "pinterest" ? "Pinterest" : "IG Spam";
+  const button = qs(`#autofill-${queue}-now`);
+  if (button) button.disabled = true;
+  try {
+    // Save the visible settings first so the manual run uses exactly what is on screen.
+    const settingsResult = await apiSend("/api/autofill/settings", "PUT", {
+      [queue]: collectAutoFillQueueSettings(queue),
+    });
+    state.autoFillSettings = settingsResult.settings;
+    const result = await apiSend(`/api/autofill/${queue}/run`, "POST", {});
+    state.queues[queue] = result.items || state.queues[queue];
+    if (result.settings) state.autoFillSettings[queue] = result.settings;
+    renderQueue(queue);
+    renderAutoFillSettings();
+    renderStats();
+    renderPlan();
+    const count = result.assigned?.length || 0;
+    toast(count ? `${name}: ${count} slot${count === 1 ? "" : "s"} ready for approval` : `${name}: no eligible new images found`, count ? "success" : "default");
+  } catch (err) {
+    toast(err.message || `Couldn't auto-fill ${name}`, "error");
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+qs("#save-autofill-settings")?.addEventListener("click", () => saveAutoFillSettings().catch(err => toast(err.message || "Couldn't save auto-fill settings", "error")));
+qs("#autofill-pinterest-now")?.addEventListener("click", () => autoFillToday("pinterest"));
+qs("#autofill-spam-now")?.addEventListener("click", () => autoFillToday("spam"));
 
 /* ---------------------- VIDEO IDEAS ---------------------- */
 function renderIdeas() {
@@ -969,10 +1079,13 @@ async function init() {
     state.influencers = data.influencers;
     state.ideas = data.ideas;
     state.activity = data.activity;
+    const auto = await apiGet("/api/autofill/settings");
+    state.autoFillSettings = auto.settings || state.autoFillSettings;
   } catch {
     toast("Couldn't reach the HQ server — start it with 'npm start' in the server folder", "error");
   }
   renderEverythingExceptDropbox();
+  renderAutoFillSettings();
   refreshDropboxLibrary({ silent: true });
 }
 init();

@@ -255,3 +255,51 @@ Recommended Zap:
    - `callback_secret` — the same value as `ZAPIER_INSTAGRAM_CALLBACK_SECRET`
 
 The HQ prevents duplicate publishing once a slot is `publishing`, `submitted`, or `posted`. Swapping the image resets the slot to `pending`.
+
+## Daily Dropbox Auto-fill (Pinterest + IG Spam)
+
+The HQ can now prepare the day's Pinterest and IG Spam queue slots automatically from the read-only Dropbox Content Library. Auto-fill only assigns Dropbox file references to queue slots — it never publishes anything and never modifies Dropbox.
+
+### Controls
+
+Open **Settings → Daily Dropbox Auto-fill**. Pinterest and IG Spam are configured independently:
+
+- **Enabled** — turns the daily scheduler on for that queue.
+- **Slots per day** — 1 to 3 queue slots.
+- **Fill time** — the daily fill time, interpreted in `Europe/London` time.
+- **No-repeat window** — recently queued/posted Dropbox assets from that queue are excluded for this many days.
+- **Source folders** — choose one or more top-level folders under `/AVERE CONTENT`. Leave all unselected to allow images from every folder.
+
+The defaults are deliberately safe: scheduling is **off** until enabled. Pinterest defaults to a 60-day no-repeat window; IG Spam defaults to 30 days.
+
+Each queue also has an **Auto-fill today** button for an immediate manual run. Manual runs use the currently visible Settings values and count as that day's fill, so the scheduler will not immediately replace them later the same day.
+
+### Approval workflow
+
+Auto-selected slots are marked **awaiting approval** and show an **Auto-picked** badge. The user can:
+
+- edit the title/caption/link;
+- choose a different Dropbox image manually;
+- upload from the Mac;
+- click **Replace suggestion** to ask the allocator for another eligible asset;
+- explicitly click **Publish Pin** / **Publish Post** when ready.
+
+There is no automatic posting in this feature.
+
+### Selection safeguards
+
+The allocator:
+
+- uses images only for the current Pinterest and IG photo workflows;
+- respects the configured source folders;
+- excludes content used within the queue's no-repeat window;
+- avoids assets currently assigned to another live queue slot;
+- avoids duplicates within the same auto-fill run;
+- does not overwrite a slot that is currently `publishing` or `submitted`;
+- does not replace a post already marked `posted` for the current day.
+
+Selection history is stored in SQLite (`content_usage`) with the Dropbox file ID, queue, last queued time, posted time, and whether it was auto-selected. Dropbox itself remains strictly read-only.
+
+### Scheduler behaviour on Render
+
+A lightweight server-side scheduler checks once per minute. Its last-run date is persisted in SQLite, so redeploys/restarts do not cause duplicate daily fills. No new Render environment variables are required for auto-fill; the existing `/var/data` persistent disk stores the settings/history.
